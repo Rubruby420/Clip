@@ -42,6 +42,7 @@ app/
     projects, projects/[id]     Project CRUD
     projects/[id]/retitle       Re-title generic "Clip N" clips from their transcript
     clips/[id]                  Clip CRUD
+    clips/[id]/autocut          AI picks the best segment within a clip
     export/[id]                 FFmpeg render + upload final mp4 to R2
 components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel, RemixPanel
 lib/
@@ -117,6 +118,11 @@ Other commands: `npm run build`, `npm run db:studio`.
   `gpt-4o-mini` build a remix recipe (hook, title, caption style, hashtags, re-cut
   tips). It adapts the *format* only — never reuses footage. Result is cached in
   `Clip.remixData` (JSON).
+- **AI Auto-Cut** (`selectBestSegment` in `lib/highlights.ts`, `api/clips/[id]/autocut`):
+  the editor opens with a blocking choice modal — AI Auto-Cut or Edit Manually. AI
+  picks the tightest segment within the clip; the result is applied as a normal trim
+  (auto-saved) and stays adjustable by hand. The autocut route only *suggests* times;
+  the editor applies them. An "AI Cut" header button re-runs it any time.
 
 ## Status (last session, 2026-05-18)
 

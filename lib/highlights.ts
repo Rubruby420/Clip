@@ -100,6 +100,58 @@ Rules:
   return out.sort((a, b) => b.score - a.score).slice(0, 12);
 }
 
+export interface BestSegment {
+  start: number; // seconds, relative to the start of the clip
+  end: number;
+  reason: string;
+}
+
+/**
+ * Pick the single tightest, most engaging segment within one rough clip —
+ * trimming filler intro and trailing dead air. Times are relative to the
+ * clip start. Returns null if there is not enough transcript to judge.
+ */
+export async function selectBestSegment(
+  words: WordTimestamp[],
+  duration: number
+): Promise<BestSegment | null> {
+  if (words.length === 0 || duration <= 0) return null;
+
+  const transcript = timestampedTranscript(words);
+
+  const res = await openai.chat.completions.create({
+    model: MODEL,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a short-form video editor. Given a timestamped transcript of one rough clip, pick the single tightest, most engaging segment to keep. Cut a rambling intro, filler, and dead air at the end; keep the hook and the payoff. The kept segment should feel punchy — ideally 15-45 seconds.",
+      },
+      {
+        role: "user",
+        content: `Clip length: ${duration.toFixed(1)}s.
+Timestamped transcript (markers like [12.3s] mark when that part starts):
+${transcript.slice(0, 8000)}
+
+Return JSON: {"start": <seconds>, "end": <seconds>, "reason": "<one short sentence on what you kept and why>"}
+Rules: start and end are seconds within 0-${duration.toFixed(1)}; start < end; keep at least 8 seconds.`,
+      },
+    ],
+  });
+
+  const json = JSON.parse(res.choices[0]?.message?.content || "{}");
+  let start = Number(json.start);
+  let end = Number(json.end);
+  if (!isFinite(start) || !isFinite(end)) return null;
+
+  start = Math.max(0, Math.min(start, duration));
+  end = Math.max(0, Math.min(end, duration));
+  if (end - start < 8) return null;
+
+  return { start, end, reason: String(json.reason || "") };
+}
+
 /** Generate a single punchy title for an existing clip from its transcript. */
 export async function generateClipTitle(text: string): Promise<string> {
   if (!text.trim()) return "";

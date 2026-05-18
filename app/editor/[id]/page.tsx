@@ -4,7 +4,7 @@ import { useEffect, useState, use, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
-  Film, Type, Layout, Sparkles,
+  Film, Type, Layout, Sparkles, Scissors,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import Timeline from "@/components/editor/Timeline";
@@ -45,6 +45,11 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [exportAspect, setExportAspect] = useState<ExportAspect>("9:16");
   const [showExportModal, setShowExportModal] = useState(false);
+
+  // Edit-mode choice: the user must pick AI auto-cut or manual before editing.
+  const [showEditChoice, setShowEditChoice] = useState(true);
+  const [aiCutting, setAiCutting] = useState(false);
+  const [aiCutReason, setAiCutReason] = useState<string | null>(null);
 
   // Load clip + project video
   useEffect(() => {
@@ -120,6 +125,27 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     setExporting(false);
   }
 
+  // Let AI pick the best part of the clip, then apply it (auto-saved like
+  // any manual trim — and still adjustable by hand afterwards).
+  async function handleAiCut() {
+    setAiCutting(true);
+    try {
+      const res = await fetch(`/api/clips/${id}/autocut`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setStartTime(data.startTime);
+        setEndTime(data.endTime);
+        setAiCutReason(data.reason || "AI trimmed this clip to its best moment.");
+        setShowEditChoice(false);
+      } else {
+        alert(data.error || "AI auto-cut failed");
+      }
+    } catch {
+      alert("AI auto-cut failed — check your connection and try again.");
+    }
+    setAiCutting(false);
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-surface-900 flex items-center justify-center">
@@ -161,6 +187,15 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         <span className="text-white text-sm font-medium truncate max-w-[200px]">{clip.title}</span>
 
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleAiCut}
+            disabled={aiCutting}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-brand-600 text-brand-300 hover:bg-brand-900/40 disabled:opacity-50 text-xs rounded-lg font-medium transition-colors"
+            title="Let AI re-trim this clip to its best moment"
+          >
+            {aiCutting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            AI Cut
+          </button>
           {exportUrl && (
             <a
               href={exportUrl}
@@ -252,6 +287,23 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         </main>
       </div>
 
+      {/* AI cut summary */}
+      {aiCutReason && (
+        <div className="shrink-0 px-4 py-2 bg-brand-900/30 border-t border-brand-800/50 flex items-center gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-brand-400 shrink-0" />
+          <p className="text-xs text-brand-200 flex-1">
+            <span className="font-semibold">AI cut:</span> {aiCutReason} You can still fine-tune the trim below.
+          </p>
+          <button
+            onClick={() => setAiCutReason(null)}
+            className="text-surface-500 hover:text-white text-sm leading-none"
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Bottom — timeline */}
       {duration > 0 && (
         <div className="shrink-0">
@@ -264,6 +316,56 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             onEndChange={setEndTime}
             onSeek={(t) => setCurrentTime(t)}
           />
+        </div>
+      )}
+
+      {/* Edit-mode choice — blocks editing until the user picks an approach */}
+      {showEditChoice && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md">
+            <h2 className="text-white font-bold text-lg mb-1">Edit this clip</h2>
+            <p className="text-surface-500 text-sm mb-5">
+              Choose how to start. You can always fine-tune the trim by hand afterwards.
+            </p>
+            <div className="space-y-3">
+              <button
+                onClick={handleAiCut}
+                disabled={aiCutting}
+                className="w-full flex items-start gap-3 p-4 rounded-xl border border-brand-600 bg-brand-900/30 hover:bg-brand-900/50 disabled:opacity-60 text-left transition-colors"
+              >
+                <div className="w-9 h-9 rounded-lg bg-brand-600 flex items-center justify-center shrink-0">
+                  {aiCutting ? (
+                    <Loader2 className="w-5 h-5 text-white animate-spin" />
+                  ) : (
+                    <Sparkles className="w-5 h-5 text-white" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-white font-semibold text-sm">
+                    {aiCutting ? "AI is choosing the best part…" : "AI Auto-Cut"}
+                  </p>
+                  <p className="text-surface-400 text-xs mt-0.5">
+                    Let AI trim straight to the punchiest, most viral moment of the clip.
+                  </p>
+                </div>
+              </button>
+              <button
+                onClick={() => setShowEditChoice(false)}
+                disabled={aiCutting}
+                className="w-full flex items-start gap-3 p-4 rounded-xl border border-surface-600 hover:border-surface-500 disabled:opacity-60 text-left transition-colors"
+              >
+                <div className="w-9 h-9 rounded-lg bg-surface-700 flex items-center justify-center shrink-0">
+                  <Scissors className="w-5 h-5 text-surface-300" />
+                </div>
+                <div>
+                  <p className="text-white font-semibold text-sm">Edit Manually</p>
+                  <p className="text-surface-400 text-xs mt-0.5">
+                    Trim and adjust everything yourself with the timeline.
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
