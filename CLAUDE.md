@@ -40,6 +40,7 @@ app/
     process/[id]                AI pipeline (Whisper + AssemblyAI) — runs async
     remix/[clipId]              Viral Remix — YouTube search + AI remix recipe
     projects, projects/[id]     Project CRUD
+    projects/[id]/retitle       Re-title generic "Clip N" clips from their transcript
     clips/[id]                  Clip CRUD
     export/[id]                 FFmpeg render + upload final mp4 to R2
 components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel, RemixPanel
@@ -47,7 +48,8 @@ lib/
   db.ts          Prisma client singleton
   r2.ts          R2/S3 client + multipart helpers
   whisper.ts     Transcription wrapper
-  assemblyai.ts  Highlight detection
+  assemblyai.ts  Highlight detection (auto-chapters)
+  highlights.ts  LLM highlight detection + clip titling (fallback for assemblyai)
   youtube.ts     YouTube Data API — search viral videos, score by views/day
   remix.ts       AI viral-remix strategist (search queries + remix recipe)
   captions.ts    Caption grouping + 4 styles (karaoke, bold-pop, minimal, emoji-auto)
@@ -96,6 +98,10 @@ Other commands: `npm run build`, `npm run db:studio`.
 - **The AI pipeline (`api/process/[id]`) runs async** — the route returns immediately and
   processing continues in the background, flipping `Project.status` through
   `processing -> ready` (or `error`). The UI polls.
+- **Highlight detection has a two-tier fallback.** AssemblyAI auto-chapters run first;
+  if they error or return nothing, `lib/highlights.ts` (`gpt-4o-mini`) detects highlights
+  from the Whisper transcript with real titles. Fixed 60s "Clip N" segments are only a
+  last resort if both fail. AssemblyAI errors are now logged, not swallowed.
 - **FFmpeg temp files** are written to `.tmp/` (gitignored). The export route should clean
   them in a `finally` block; on Windows cleanup can fail if a file is still locked.
 - The project was scaffolded **manually** (not via `create-next-app`) because
@@ -117,10 +123,10 @@ Other commands: `npm run build`, `npm run db:studio`.
 - Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
 - AI processing kicks off automatically after upload.
 - Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- **Viral Remix feature added** — code complete and typechecks. Needs `YOUTUBE_API_KEY`
-  in `.env.local` before it can run; not yet tested live.
-- Not yet rigorously tested end-to-end: AI clip quality, editor caption preview,
-  export output, Viral Remix.
+- **Viral Remix feature added** — `YOUTUBE_API_KEY` is set; tested live and working.
+- **Highlight detection fixed** — LLM fallback gives clips real titles when AssemblyAI
+  yields no chapters. `retitle` endpoint backfills existing generic-titled clips.
+- Not yet rigorously tested end-to-end: editor caption preview, export output.
 
 ## Repository
 

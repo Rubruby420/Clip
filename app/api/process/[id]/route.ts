@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { transcribeAudio, sliceWords } from "@/lib/whisper";
-import { detectHighlights } from "@/lib/assemblyai";
+import { detectHighlights, type Highlight } from "@/lib/assemblyai";
+import { detectHighlightsFromTranscript } from "@/lib/highlights";
 import { extractAudio, extractThumbnail, tmpPath } from "@/lib/ffmpeg";
 import fs from "fs";
 import https from "https";
@@ -45,10 +46,24 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ id: s
       // 3. Transcribe with Whisper
       const transcription = await transcribeAudio(audioPath);
 
-      // 4. Detect highlights with AssemblyAI
-      const highlights: Awaited<ReturnType<typeof detectHighlights>> = await detectHighlights(downloadUrl).catch(() => []);
+      // 4. Detect highlights — AssemblyAI chapters first, then LLM transcript
+      //    analysis as a fallback so clips always get real, specific titles.
+      let highlights: Highlight[] = [];
+      try {
+        highlights = await detectHighlights(downloadUrl);
+      } catch (err) {
+        console.error("AssemblyAI highlight detection failed:", err);
+      }
 
-      // Fallback: if no chapters, create 60s segments
+      if (highlights.length === 0) {
+        console.warn("No AssemblyAI chapters — using LLM highlight detection.");
+        highlights = await detectHighlightsFromTranscript(transcription).catch((err) => {
+          console.error("LLM highlight detection failed:", err);
+          return [];
+        });
+      }
+
+      // Last resort: fixed 60s segments (only if both detectors fail).
       if (highlights.length === 0 && transcription.duration > 0) {
         const segDuration = 60;
         for (let t = 0; t < transcription.duration; t += segDuration) {
