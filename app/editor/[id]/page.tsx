@@ -4,12 +4,13 @@ import { useEffect, useState, use, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
-  Film, Type, Layout,
+  Film, Type, Layout, Sparkles,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import Timeline from "@/components/editor/Timeline";
 import LayoutPanel, { type LayoutConfig, DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import CaptionPanel from "@/components/editor/CaptionPanel";
+import RemixPanel from "@/components/editor/RemixPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
 
 interface WordTimestamp { word: string; start: number; end: number; }
@@ -20,7 +21,7 @@ interface Clip {
   exportUrl: string | null;
 }
 
-type Tab = "layout" | "captions";
+type Tab = "layout" | "captions" | "viral";
 type ExportAspect = "9:16" | "16:9" | "1:1";
 
 export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
@@ -140,6 +141,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const TAB_ICONS: Record<Tab, React.ReactNode> = {
     layout: <Layout className="w-4 h-4" />,
     captions: <Type className="w-4 h-4" />,
+    viral: <Sparkles className="w-4 h-4" />,
   };
 
   return (
@@ -185,11 +187,11 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         <aside className="w-64 border-r border-surface-600 bg-surface-800 flex flex-col overflow-y-auto shrink-0">
           {/* Tab switcher */}
           <div className="flex border-b border-surface-600">
-            {(["layout", "captions"] as Tab[]).map((tab) => (
+            {(["layout", "captions", "viral"] as Tab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-xs font-medium transition-colors capitalize ${
+                className={`flex-1 flex items-center justify-center gap-1 py-3 text-xs font-medium transition-colors capitalize ${
                   activeTab === tab
                     ? "text-brand-300 border-b-2 border-brand-500"
                     : "text-surface-500 hover:text-white"
@@ -209,6 +211,15 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               onChange={setCaptionConfig}
               enabled={captionsEnabled}
               onEnabledChange={setCaptionsEnabled}
+            />
+          )}
+          {activeTab === "viral" && (
+            <RemixPanel
+              clipId={clip.id}
+              onApplyStyle={(style) => {
+                setCaptionConfig((prev) => ({ ...prev, style }));
+                setCaptionsEnabled(true);
+              }}
             />
           )}
         </aside>

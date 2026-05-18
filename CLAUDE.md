@@ -19,7 +19,9 @@ Solo-use app (no multi-tenant auth).
 - **Prisma + SQLite** — `prisma/schema.prisma`, DB file `prisma/dev.db` (gitignored)
 - **Cloudflare R2** — video storage (S3-compatible)
 - **OpenAI Whisper** (`whisper-1`) — transcription with word-level timestamps
+- **OpenAI `gpt-4o-mini`** — viral-remix strategist (search queries + remix recipes)
 - **AssemblyAI** — auto-chapters / highlight detection + virality scoring
+- **YouTube Data API v3** — finds currently-viral videos to use as remix templates
 - **FFmpeg** via `ffmpeg-static` + `child_process` — audio extract, thumbnails, export render
 - **lucide-react** — icons. (`konva`/`react-konva` are installed but the editor preview
   currently uses plain HTML video + CSS overlays, not a Konva canvas.)
@@ -36,15 +38,18 @@ app/
     upload/multipart/start      Create R2 multipart upload + presigned part URLs
     upload/multipart/complete   Finalise the multipart upload
     process/[id]                AI pipeline (Whisper + AssemblyAI) — runs async
+    remix/[clipId]              Viral Remix — YouTube search + AI remix recipe
     projects, projects/[id]     Project CRUD
     clips/[id]                  Clip CRUD
     export/[id]                 FFmpeg render + upload final mp4 to R2
-components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel
+components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel, RemixPanel
 lib/
   db.ts          Prisma client singleton
   r2.ts          R2/S3 client + multipart helpers
   whisper.ts     Transcription wrapper
   assemblyai.ts  Highlight detection
+  youtube.ts     YouTube Data API — search viral videos, score by views/day
+  remix.ts       AI viral-remix strategist (search queries + remix recipe)
   captions.ts    Caption grouping + 4 styles (karaoke, bold-pop, minimal, emoji-auto)
   ffmpeg.ts      FFmpeg wrappers (extractAudio, extractThumbnail, exportClip, generateSRT)
 ```
@@ -61,8 +66,11 @@ lib/
    CLOUDFLARE_R2_PUBLIC_URL=
    OPENAI_API_KEY=
    ASSEMBLYAI_API_KEY=
+   YOUTUBE_API_KEY=
    DATABASE_URL="file:./dev.db"
    ```
+   `YOUTUBE_API_KEY` (free): Google Cloud Console → create a project → enable
+   "YouTube Data API v3" → Credentials → Create credentials → API key.
 3. `npm run db:push` — creates the SQLite database
 4. `npm run dev` — starts on **port 3000** (locked; see note below)
 
@@ -92,13 +100,27 @@ Other commands: `npm run build`, `npm run db:studio`.
   them in a `finally` block; on Windows cleanup can fail if a file is still locked.
 - The project was scaffolded **manually** (not via `create-next-app`) because
   `create-next-app` rejects the capital letter in the `Clip/` folder name.
+- **The Prisma CLI only reads `.env`, not `.env.local`.** Next.js reads `.env.local`,
+  so the app runs fine, but `npm run db:push` / `prisma generate` fail with
+  "Environment variable not found: DATABASE_URL". Run them with the var set inline:
+  `$env:DATABASE_URL='file:./dev.db'; npm run db:push` (PowerShell).
+- **`prisma generate` fails with `EPERM` while `npm run dev` is running** — the dev
+  server locks the query-engine DLL. Stop the dev server first, then regenerate.
+- **Viral Remix** (`lib/youtube.ts` + `lib/remix.ts`, `api/remix/[clipId]`, editor
+  "Viral" tab): searches YouTube for viral videos in the clip's niche, then has
+  `gpt-4o-mini` build a remix recipe (hook, title, caption style, hashtags, re-cut
+  tips). It adapts the *format* only — never reuses footage. Result is cached in
+  `Clip.remixData` (JSON).
 
 ## Status (last session, 2026-05-18)
 
 - Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
 - AI processing kicks off automatically after upload.
 - Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- Not yet rigorously tested end-to-end: AI clip quality, editor caption preview, export output.
+- **Viral Remix feature added** — code complete and typechecks. Needs `YOUTUBE_API_KEY`
+  in `.env.local` before it can run; not yet tested live.
+- Not yet rigorously tested end-to-end: AI clip quality, editor caption preview,
+  export output, Viral Remix.
 
 ## Repository
 
