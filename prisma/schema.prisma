@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id            String   @id @default(cuid())
+  title         String
+  originalUrl   String
+  originalKey   String
+  duration      Float?
+  status        String   @default("uploading")
+  transcription String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  clips         Clip[]
+}
+
+model Clip {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title        String
+  startTime    Float
+  endTime      Float
+  score        Float?
+  words        String   @default("[]")
+  captionStyle String   @default("bold-pop")
+  layoutConfig String   @default("{}")
+  exportUrl    String?
+  exportKey    String?
+  thumbnailUrl String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
