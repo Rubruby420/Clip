@@ -1,51 +1,121 @@
 import {
   S3Client,
-  PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  PutObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const R2 = new S3Client({
   region: "auto",
-  endpoint: `https://${process.env.CLOUDFLARE_R2_ACCOUNT_ID!}.r2.cloudflarestorage.com`,
+  endpoint: `https://${process.env.CLOUDFLARE_R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
     accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID!,
     secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY!,
   },
+  // Prevent the SDK from forcing x-amz-checksum headers, which break
+  // browser uploads via presigned URLs (CORS / signature mismatch).
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 const BUCKET = process.env.CLOUDFLARE_R2_BUCKET_NAME!;
 const PUBLIC_URL = process.env.CLOUDFLARE_R2_PUBLIC_URL!;
 
-export async function getUploadPresignedUrl(key: string, contentType: string) {
-  const url = await getSignedUrl(
-    R2,
-    new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
-    { expiresIn: 3600 }
-  );
-  return url;
+export interface UploadedPart {
+  partNumber: number;
+  etag: string;
 }
 
-export async function getDownloadPresignedUrl(key: string) {
+/** Start a multipart upload, returns the R2 uploadId. */
+export async function createMultipartUpload(key: string, contentType: string): Promise<string> {
+  const res = await R2.send(
+    new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType })
+  );
+  if (!res.UploadId) throw new Error("R2 did not return an UploadId");
+  return res.UploadId;
+}
+
+/** Presign a single part-upload PUT URL the browser can use directly. */
+export async function signUploadPart(
+  key: string,
+  uploadId: string,
+  partNumber: number
+): Promise<string> {
   return getSignedUrl(
     R2,
-    new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-    { expiresIn: 3600 }
+    new UploadPartCommand({
+      Bucket: BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+    }),
+    { expiresIn: 21600 } // 6 hours — enough for slow connections / large files
   );
 }
 
-export function getPublicUrl(key: string) {
+/** Finalise a multipart upload once all parts are uploaded. */
+export async function completeMultipartUpload(
+  key: string,
+  uploadId: string,
+  parts: UploadedPart[]
+): Promise<void> {
+  await R2.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+      },
+    })
+  );
+}
+
+/** Cancel an in-progress multipart upload (cleanup on failure). */
+export async function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+  await R2.send(
+    new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId })
+  );
+}
+
+export async function getDownloadPresignedUrl(key: string): Promise<string> {
+  return getSignedUrl(R2, new GetObjectCommand({ Bucket: BUCKET, Key: key }), {
+    expiresIn: 3600,
+  });
+}
+
+export function getPublicUrl(key: string): string {
   return `${PUBLIC_URL}/${key}`;
 }
 
-export async function deleteObject(key: string) {
+export async function deleteObject(key: string): Promise<void> {
   await R2.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
-export async function uploadBuffer(key: string, buffer: Buffer, contentType: string) {
+export async function uploadBuffer(
+  key: string,
+  buffer: Buffer,
+  contentType: string
+): Promise<string> {
   await R2.send(
     new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType })
   );
   return getPublicUrl(key);
+}
+
+export function r2EnvMissing(): string[] {
+  return [
+    "CLOUDFLARE_R2_ACCOUNT_ID",
+    "CLOUDFLARE_R2_ACCESS_KEY_ID",
+    "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+    "CLOUDFLARE_R2_BUCKET_NAME",
+    "CLOUDFLARE_R2_PUBLIC_URL",
+  ].filter((k) => !process.env[k]);
 }

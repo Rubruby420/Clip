@@ -42,3 +42,14 @@ venv/
 # Misc
 *.tmp
 *.bak
+
+# App temp / build artifacts
+.tmp/
+*.tsbuildinfo
+
+# SQLite database (recreate with: npm run db:push)
+prisma/*.db
+prisma/*.db-journal
+
+# Claude local settings
+.claude/settings.local.json
