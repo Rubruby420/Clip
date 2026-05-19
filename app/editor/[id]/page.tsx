@@ -4,13 +4,14 @@ import { useEffect, useState, use, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
-  Film, Type, Layout, Sparkles, Scissors,
+  Film, Type, Layout, Sparkles, Scissors, BookOpen,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import Timeline from "@/components/editor/Timeline";
 import LayoutPanel, { type LayoutConfig, DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import CaptionPanel from "@/components/editor/CaptionPanel";
 import RemixPanel from "@/components/editor/RemixPanel";
+import StoryPanel from "@/components/editor/StoryPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
 
 interface WordTimestamp { word: string; start: number; end: number; }
@@ -21,7 +22,7 @@ interface Clip {
   exportUrl: string | null;
 }
 
-type Tab = "layout" | "captions" | "viral";
+type Tab = "story" | "layout" | "captions" | "viral";
 type ExportAspect = "9:16" | "16:9" | "1:1";
 
 export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
@@ -165,6 +166,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   }
 
   const TAB_ICONS: Record<Tab, React.ReactNode> = {
+    story: <BookOpen className="w-4 h-4" />,
     layout: <Layout className="w-4 h-4" />,
     captions: <Type className="w-4 h-4" />,
     viral: <Sparkles className="w-4 h-4" />,
@@ -222,11 +224,11 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         <aside className="w-64 border-r border-surface-600 bg-surface-800 flex flex-col overflow-y-auto shrink-0">
           {/* Tab switcher */}
           <div className="flex border-b border-surface-600">
-            {(["layout", "captions", "viral"] as Tab[]).map((tab) => (
+            {(["story", "layout", "captions", "viral"] as Tab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`flex-1 flex items-center justify-center gap-1 py-3 text-xs font-medium transition-colors capitalize ${
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-medium transition-colors capitalize ${
                   activeTab === tab
                     ? "text-brand-300 border-b-2 border-brand-500"
                     : "text-surface-500 hover:text-white"
@@ -254,6 +256,16 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               onApplyStyle={(style) => {
                 setCaptionConfig((prev) => ({ ...prev, style }));
                 setCaptionsEnabled(true);
+              }}
+            />
+          )}
+          {activeTab === "story" && (
+            <StoryPanel
+              clipId={clip.id}
+              onApplyRecut={(start, end, reason) => {
+                setStartTime(start);
+                setEndTime(end);
+                setAiCutReason(reason);
               }}
             />
           )}

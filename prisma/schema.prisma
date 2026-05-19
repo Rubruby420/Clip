@@ -32,6 +32,7 @@ model Clip {
   captionStyle String   @default("bold-pop")
   layoutConfig String   @default("{}")
   remixData    String?
+  storyData    String?
   exportUrl    String?
   exportKey    String?
   thumbnailUrl String?

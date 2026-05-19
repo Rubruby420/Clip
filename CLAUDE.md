@@ -16,10 +16,12 @@ Solo-use app (no multi-tenant auth).
 
 - **Next.js 15** (App Router, TypeScript) — full-stack, API routes for the backend
 - **Tailwind CSS** — dark-mode UI. Configs are `postcss.config.js` + `tailwind.config.js`
-- **Prisma + SQLite** — `prisma/schema.prisma`, DB file `prisma/dev.db` (gitignored)
+- **Prisma + SQLite** — `prisma/schema.prisma`. DB file lives OUTSIDE the repo at
+  `C:/Users/tania/ClipData/dev.db` (see gotcha — must not be in OneDrive)
 - **Cloudflare R2** — video storage (S3-compatible)
 - **OpenAI Whisper** (`whisper-1`) — transcription with word-level timestamps
-- **OpenAI `gpt-4o-mini`** — viral-remix strategist (search queries + remix recipes)
+- **OpenAI `gpt-4o-mini`** — highlight detection, viral-remix recipes, Story Mode
+- **OpenAI TTS** (`tts-1`) — AI voiceover generation for Story Mode
 - **AssemblyAI** — auto-chapters / highlight detection + virality scoring
 - **YouTube Data API v3** — finds currently-viral videos to use as remix templates
 - **FFmpeg** via `ffmpeg-static` + `child_process` — audio extract, thumbnails, export render
@@ -43,8 +45,11 @@ app/
     projects/[id]/retitle       Re-title generic "Clip N" clips from their transcript
     clips/[id]                  Clip CRUD
     clips/[id]/autocut          AI picks the best segment within a clip
+    clips/[id]/story            Story Mode — generate the story plan
+    clips/[id]/story/voice      Story Mode — generate AI voiceover (TTS)
     export/[id]                 FFmpeg render + upload final mp4 to R2
-components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel, RemixPanel
+components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel,
+                                RemixPanel, StoryPanel
 lib/
   db.ts          Prisma client singleton
   r2.ts          R2/S3 client + multipart helpers
@@ -53,6 +58,7 @@ lib/
   highlights.ts  LLM highlight detection + clip titling (fallback for assemblyai)
   youtube.ts     YouTube Data API — search viral videos, score by views/day
   remix.ts       AI viral-remix strategist (search queries + remix recipe)
+  story.ts       Story Mode — story plan + AI voiceover (TTS)
   captions.ts    Caption grouping + 4 styles (karaoke, bold-pop, minimal, emoji-auto)
   ffmpeg.ts      FFmpeg wrappers (extractAudio, extractThumbnail, exportClip, generateSRT)
 ```
@@ -70,10 +76,11 @@ lib/
    OPENAI_API_KEY=
    ASSEMBLYAI_API_KEY=
    YOUTUBE_API_KEY=
-   DATABASE_URL="file:./dev.db"
+   DATABASE_URL="file:C:/Users/tania/ClipData/dev.db"
    ```
    `YOUTUBE_API_KEY` (free): Google Cloud Console → create a project → enable
    "YouTube Data API v3" → Credentials → Create credentials → API key.
+   `DATABASE_URL` must point OUTSIDE OneDrive (see gotcha below).
 3. `npm run db:push` — creates the SQLite database
 4. `npm run dev` — starts on **port 3000** (locked; see note below)
 
@@ -107,10 +114,15 @@ Other commands: `npm run build`, `npm run db:studio`.
   them in a `finally` block; on Windows cleanup can fail if a file is still locked.
 - The project was scaffolded **manually** (not via `create-next-app`) because
   `create-next-app` rejects the capital letter in the `Clip/` folder name.
+- **The SQLite DB must live OUTSIDE OneDrive.** `DATABASE_URL` points to
+  `C:/Users/tania/ClipData/dev.db` — NOT the project folder, which is OneDrive-synced.
+  OneDrive syncing a live SQLite file can swap it for an older copy and cause total data
+  loss (this happened once — the whole projects table was wiped). Always copy the DB to
+  a backup before `prisma db push`.
 - **The Prisma CLI only reads `.env`, not `.env.local`.** Next.js reads `.env.local`,
   so the app runs fine, but `npm run db:push` / `prisma generate` fail with
   "Environment variable not found: DATABASE_URL". Run them with the var set inline:
-  `$env:DATABASE_URL='file:./dev.db'; npm run db:push` (PowerShell).
+  `$env:DATABASE_URL='file:C:/Users/tania/ClipData/dev.db'; npm run db:push` (PowerShell).
 - **`prisma generate` fails with `EPERM` while `npm run dev` is running** — the dev
   server locks the query-engine DLL. Stop the dev server first, then regenerate.
 - **Viral Remix** (`lib/youtube.ts` + `lib/remix.ts`, `api/remix/[clipId]`, editor
@@ -123,16 +135,25 @@ Other commands: `npm run build`, `npm run db:studio`.
   picks the tightest segment within the clip; the result is applied as a normal trim
   (auto-saved) and stays adjustable by hand. The autocut route only *suggests* times;
   the editor applies them. An "AI Cut" header button re-runs it any time.
+- **Story Mode** (`lib/story.ts`, `api/clips/[id]/story` + `/voice`, editor "Story"
+  tab): turns a clip into a structured story. `gpt-4o-mini` reads the whole video for
+  context and produces a story plan — 3-5 beats, each with a hybrid voiceover line
+  (original / bridge / new), a one-line on-screen callout, a sound/B-roll cue — plus a
+  recommended re-cut and an AI-picked TTS voice. The script is editable in the panel;
+  "generate voiceover" runs OpenAI `tts-1`, uploads the mp3 to R2, and plays it inline.
+  Plan cached in `Clip.storyData` (JSON).
 
 ## Status (last session, 2026-05-18)
 
 - Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
 - AI processing kicks off automatically after upload.
 - Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- **Viral Remix feature added** — `YOUTUBE_API_KEY` is set; tested live and working.
-- **Highlight detection fixed** — LLM fallback gives clips real titles when AssemblyAI
-  yields no chapters. `retitle` endpoint backfills existing generic-titled clips.
-- Not yet rigorously tested end-to-end: editor caption preview, export output.
+- **Viral Remix, AI Auto-Cut, Story Mode** — all built and typecheck clean.
+- **Highlight detection fixed** — LLM fallback gives clips real titles.
+- **DATA-LOSS INCIDENT** — the SQLite DB (then inside OneDrive) was wiped; the test
+  project's video was also deleted from R2. DB moved out of OneDrive to prevent repeat.
+  App is a clean slate — needs a fresh video upload to test Story Mode / Remix end-to-end.
+- Story Mode tested only at the code/typecheck level; not yet run live on a real clip.
 
 ## Repository
 
