@@ -54,6 +54,11 @@ export default function UploadPage() {
   const [autoProcess, setAutoProcess] = useState(true);
   const [statusText, setStatusText] = useState("");
 
+  // Smart Import — AI keeps the best part of each clip, trims the rest.
+  const [smartImport, setSmartImport] = useState(true);
+  const [minLen, setMinLen] = useState(15);
+  const [maxLen, setMaxLen] = useState(60);
+
   const handleFile = useCallback((f: File) => {
     if (!f.type.startsWith("video/")) { setError("Please upload a video file."); return; }
     setFile(f);
@@ -132,7 +137,11 @@ export default function UploadPage() {
       setPhase("uploaded");
 
       if (autoProcess) {
-        await fetch(`/api/process/${projectId}`, { method: "POST" });
+        await fetch(`/api/process/${projectId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ smartImport, minLen, maxLen }),
+        });
       }
 
       setTimeout(() => router.push(`/projects/${projectId}`), 1500);
@@ -275,6 +284,53 @@ export default function UploadPage() {
                     <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${autoProcess ? "left-6" : "left-1"}`} />
                   </button>
                 </div>
+
+                {autoProcess && (
+                  <div className="p-4 bg-surface-800 rounded-xl border border-surface-600 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-white text-sm font-medium">Smart Import — auto-trim clips</p>
+                        <p className="text-surface-500 text-xs mt-0.5">AI keeps the best part of each clip and trims the rest</p>
+                      </div>
+                      <button
+                        onClick={() => setSmartImport(!smartImport)}
+                        className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${smartImport ? "bg-brand-600" : "bg-surface-600"}`}
+                      >
+                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${smartImport ? "left-6" : "left-1"}`} />
+                      </button>
+                    </div>
+
+                    {smartImport && (
+                      <div className="pt-1 space-y-2.5 border-t border-surface-700">
+                        <div className="flex justify-between text-xs pt-2.5">
+                          <span className="text-surface-400">Clip length range</span>
+                          <span className="text-brand-300 font-medium tabular-nums">{minLen}s – {maxLen}s</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-surface-500 w-7">Min</span>
+                          <input
+                            type="range" min={10} max={90} step={5} value={minLen}
+                            onChange={(e) => setMinLen(Math.min(parseInt(e.target.value), maxLen))}
+                            className="flex-1 accent-brand-500"
+                          />
+                          <span className="text-[10px] text-white w-8 text-right tabular-nums">{minLen}s</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-surface-500 w-7">Max</span>
+                          <input
+                            type="range" min={10} max={90} step={5} value={maxLen}
+                            onChange={(e) => setMaxLen(Math.max(parseInt(e.target.value), minLen))}
+                            className="flex-1 accent-brand-500"
+                          />
+                          <span className="text-[10px] text-white w-8 text-right tabular-nums">{maxLen}s</span>
+                        </div>
+                        <p className="text-[10px] text-surface-600">
+                          AI picks the best length for each clip within this range.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <button
                   onClick={startUpload}

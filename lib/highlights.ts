@@ -109,14 +109,18 @@ export interface BestSegment {
 /**
  * Pick the single tightest, most engaging segment within one rough clip —
  * trimming filler intro and trailing dead air. Times are relative to the
- * clip start. Returns null if there is not enough transcript to judge.
+ * clip start. `minLen`/`maxLen` bound the kept segment's length in seconds.
+ * Returns null if there is not enough transcript to judge.
  */
 export async function selectBestSegment(
   words: WordTimestamp[],
-  duration: number
+  duration: number,
+  opts?: { minLen?: number; maxLen?: number }
 ): Promise<BestSegment | null> {
   if (words.length === 0 || duration <= 0) return null;
 
+  const minLen = Math.max(4, opts?.minLen ?? 8);
+  const maxLen = Math.max(minLen, opts?.maxLen ?? 60);
   const transcript = timestampedTranscript(words);
 
   const res = await openai.chat.completions.create({
@@ -126,7 +130,7 @@ export async function selectBestSegment(
       {
         role: "system",
         content:
-          "You are a short-form video editor. Given a timestamped transcript of one rough clip, pick the single tightest, most engaging segment to keep. Cut a rambling intro, filler, and dead air at the end; keep the hook and the payoff. The kept segment should feel punchy — ideally 15-45 seconds.",
+          "You are a short-form video editor. Given a timestamped transcript of one rough clip, pick the single tightest, most engaging segment to keep. Cut a rambling intro, filler, and dead air at the end; keep the hook and the payoff.",
       },
       {
         role: "user",
@@ -134,8 +138,9 @@ export async function selectBestSegment(
 Timestamped transcript (markers like [12.3s] mark when that part starts):
 ${transcript.slice(0, 8000)}
 
+Pick the best segment to keep. It should be between ${minLen} and ${maxLen} seconds long.
 Return JSON: {"start": <seconds>, "end": <seconds>, "reason": "<one short sentence on what you kept and why>"}
-Rules: start and end are seconds within 0-${duration.toFixed(1)}; start < end; keep at least 8 seconds.`,
+Rules: start and end are seconds within 0-${duration.toFixed(1)}; start < end.`,
       },
     ],
   });
@@ -147,7 +152,15 @@ Rules: start and end are seconds within 0-${duration.toFixed(1)}; start < end; k
 
   start = Math.max(0, Math.min(start, duration));
   end = Math.max(0, Math.min(end, duration));
-  if (end - start < 8) return null;
+  if (end <= start) return null;
+
+  // Nudge the segment toward the requested length window.
+  if (end - start > maxLen) end = start + maxLen;
+  if (end - start < minLen) {
+    end = Math.min(duration, start + minLen);
+    if (end - start < minLen) start = Math.max(0, end - minLen);
+  }
+  if (end - start < 4) return null;
 
   return { start, end, reason: String(json.reason || "") };
 }

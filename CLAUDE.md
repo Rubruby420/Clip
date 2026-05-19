@@ -142,13 +142,18 @@ Other commands: `npm run build`, `npm run db:studio`.
   recommended re-cut and an AI-picked TTS voice. The script is editable in the panel;
   "generate voiceover" runs OpenAI `tts-1`, uploads the mp3 to R2, and plays it inline.
   Plan cached in `Clip.storyData` (JSON).
+- **Smart Import** (upload-page toggle → `api/process/[id]` body): when enabled, the
+  process pipeline runs `selectBestSegment` on every detected highlight and saves clips
+  already trimmed to their best part, within a user-chosen min-max length range
+  (10-90s). The process route reads `{ smartImport, minLen, maxLen }` from its POST
+  body; it's off when called with no body.
 
 ## Status (last session, 2026-05-18)
 
 - Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
 - AI processing kicks off automatically after upload.
 - Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- **Viral Remix, AI Auto-Cut, Story Mode** — all built and typecheck clean.
+- **Viral Remix, AI Auto-Cut, Story Mode, Smart Import** — all built and typecheck clean.
 - **Highlight detection fixed** — LLM fallback gives clips real titles.
 - **DATA-LOSS INCIDENT** — the SQLite DB (then inside OneDrive) was wiped; the test
   project's video was also deleted from R2. DB moved out of OneDrive to prevent repeat.

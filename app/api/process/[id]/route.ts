@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { transcribeAudio, sliceWords } from "@/lib/whisper";
 import { detectHighlights, type Highlight } from "@/lib/assemblyai";
-import { detectHighlightsFromTranscript } from "@/lib/highlights";
+import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
 import { extractAudio, extractThumbnail, tmpPath } from "@/lib/ffmpeg";
 import fs from "fs";
 import https from "https";
@@ -22,11 +22,17 @@ async function downloadFile(url: string, dest: string): Promise<void> {
   });
 }
 
-export async function POST(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Smart Import settings (from the upload page). Off unless explicitly enabled.
+  const body = await req.json().catch(() => ({}));
+  const smartImport = body.smartImport === true;
+  const minLen = Math.max(10, Math.min(90, Number(body.minLen) || 15));
+  const maxLen = Math.max(minLen, Math.min(90, Number(body.maxLen) || 60));
 
   await db.project.update({ where: { id }, data: { status: "processing" } });
 
@@ -90,9 +96,28 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ id: s
       // 6. Create clip records + thumbnails
       for (const h of highlights.slice(0, 12)) {
         const clipId = randomUUID();
-        const thumbPath = tmpPath(`${clipId}_thumb.jpg`);
 
-        await extractThumbnail(videoPath, thumbPath, h.start + 1).catch(() => null);
+        // Smart Import: tighten each clip to its best segment within the
+        // requested length window before saving it.
+        let clipStart = h.start;
+        let clipEnd = h.end;
+        if (smartImport) {
+          const roughWords = sliceWords(transcription.words, h.start, h.end);
+          const seg = await selectBestSegment(roughWords, h.end - h.start, {
+            minLen,
+            maxLen,
+          }).catch((err) => {
+            console.error("Smart Import trim failed for a clip:", err);
+            return null;
+          });
+          if (seg) {
+            clipStart = h.start + seg.start;
+            clipEnd = h.start + seg.end;
+          }
+        }
+
+        const thumbPath = tmpPath(`${clipId}_thumb.jpg`);
+        await extractThumbnail(videoPath, thumbPath, clipStart + 1).catch(() => null);
 
         let thumbnailUrl = "";
         if (fs.existsSync(thumbPath)) {
@@ -102,15 +127,15 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ id: s
           fs.unlinkSync(thumbPath);
         }
 
-        const words = sliceWords(transcription.words, h.start, h.end);
+        const words = sliceWords(transcription.words, clipStart, clipEnd);
 
         await db.clip.create({
           data: {
             id: clipId,
             projectId: id,
             title: h.title,
-            startTime: h.start,
-            endTime: h.end,
+            startTime: clipStart,
+            endTime: clipEnd,
             score: h.score,
             words: JSON.stringify(words),
             thumbnailUrl,
