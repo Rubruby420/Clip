@@ -158,16 +158,24 @@ Other commands: `npm run build`, `npm run db:studio`.
 
 ## Status (last session, 2026-05-18)
 
+**All planned AI features are built, committed, and pushed to GitHub.**
+
 - Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
 - AI processing kicks off automatically after upload.
 - Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- **Viral Remix, AI Auto-Cut, Story Mode, Smart Import, Virality Coach** — all built;
-  Story Mode + Viral Remix + Coach tested live and working.
 - **Highlight detection fixed** — LLM fallback gives clips real titles.
-- **DATA-LOSS INCIDENT** — the SQLite DB (then inside OneDrive) was wiped; the test
-  project's video was also deleted from R2. DB moved out of OneDrive to prevent repeat.
-  App is a clean slate — needs a fresh video upload to test Story Mode / Remix end-to-end.
-- Story Mode tested only at the code/typecheck level; not yet run live on a real clip.
+- **Viral Remix, AI Auto-Cut, Story Mode, Virality Coach** — built and **tested live**.
+- **Smart Import** — built; runs only inside the import pipeline, so it will be
+  exercised on the next real upload (toggle is on the upload page).
+- **Database** — moved out of OneDrive to `C:/Users/tania/ClipData/dev.db` after a
+  OneDrive-sync incident wiped it once. Always back up before `prisma db push`.
+- **App is a clean slate.** The test project (UberX) and its video were deleted by the
+  user on purpose (a delete click in the dashboard also wipes the R2 video). The
+  database currently has no projects — upload a fresh video to use the app.
+
+### Next session
+- No feature backlog. Likely next steps: a live test of Smart Import + FFmpeg export
+  on a fresh upload, or a brand-new feature the user decides on.
 
 ## Repository
 
