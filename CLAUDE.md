@@ -47,9 +47,10 @@ app/
     clips/[id]/autocut          AI picks the best segment within a clip
     clips/[id]/story            Story Mode — generate the story plan
     clips/[id]/story/voice      Story Mode — generate AI voiceover (TTS)
+    clips/[id]/coach            Virality Coach — readiness check + reference videos
     export/[id]                 FFmpeg render + upload final mp4 to R2
 components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel,
-                                RemixPanel, StoryPanel
+                                RemixPanel, StoryPanel, CoachPanel
 lib/
   db.ts          Prisma client singleton
   r2.ts          R2/S3 client + multipart helpers
@@ -59,6 +60,7 @@ lib/
   youtube.ts     YouTube Data API — search viral videos, score by views/day
   remix.ts       AI viral-remix strategist (search queries + remix recipe)
   story.ts       Story Mode — story plan + AI voiceover (TTS)
+  coach.ts       Virality Coach — clip readiness evaluation
   captions.ts    Caption grouping + 4 styles (karaoke, bold-pop, minimal, emoji-auto)
   ffmpeg.ts      FFmpeg wrappers (extractAudio, extractThumbnail, exportClip, generateSRT)
 ```
@@ -147,13 +149,20 @@ Other commands: `npm run build`, `npm run db:studio`.
   already trimmed to their best part, within a user-chosen min-max length range
   (10-90s). The process route reads `{ smartImport, minLen, maxLen }` from its POST
   body; it's off when called with no body.
+- **Virality Coach** (`lib/coach.ts`, `api/clips/[id]/coach`, editor "Coach" tab):
+  the process pipeline auto-runs `evaluateClip` on every clip (score + verdict + issue/
+  fix comments) and stores it in `Clip.coachData`. Weak clips (`viralReady: false`) get
+  a "needs work" badge on the project page. The Coach tab shows the critique; for weak
+  clips it also pulls reference viral videos via the Remix/YouTube helpers (POST does
+  evaluation + video fetch; the import auto-check stores the report only).
 
 ## Status (last session, 2026-05-18)
 
 - Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
 - AI processing kicks off automatically after upload.
 - Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- **Viral Remix, AI Auto-Cut, Story Mode, Smart Import** — all built and typecheck clean.
+- **Viral Remix, AI Auto-Cut, Story Mode, Smart Import, Virality Coach** — all built;
+  Story Mode + Viral Remix + Coach tested live and working.
 - **Highlight detection fixed** — LLM fallback gives clips real titles.
 - **DATA-LOSS INCIDENT** — the SQLite DB (then inside OneDrive) was wiped; the test
   project's video was also deleted from R2. DB moved out of OneDrive to prevent repeat.

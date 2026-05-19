@@ -3,12 +3,19 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle } from "lucide-react";
+import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 
 interface Clip {
   id: string; title: string; startTime: number; endTime: number;
   score: number | null; thumbnailUrl: string | null; exportUrl: string | null;
+  coachData: string | null;
+}
+
+// Read the Virality Coach verdict cached on a clip.
+function coachNeedsWork(coachData: string | null): boolean {
+  if (!coachData) return false;
+  try { return JSON.parse(coachData)?.report?.viralReady === false; } catch { return false; }
 }
 interface Project {
   id: string; title: string; status: string; duration: number | null;
@@ -161,9 +168,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
                     <div className="p-4">
                       <h3 className="text-white text-sm font-semibold mb-1 line-clamp-2">{clip.title}</h3>
-                      <p className="text-surface-500 text-xs mb-3">
+                      <p className="text-surface-500 text-xs mb-2">
                         {formatDuration(clip.startTime)} – {formatDuration(clip.endTime)}
                       </p>
+                      {coachNeedsWork(clip.coachData) && (
+                        <p className="flex items-center gap-1 text-[11px] text-amber-400 mb-3">
+                          <AlertTriangle className="w-3 h-3" /> Coach: needs work
+                        </p>
+                      )}
 
                       <div className="flex items-center gap-2">
                         <Link

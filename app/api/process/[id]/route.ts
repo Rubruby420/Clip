@@ -4,6 +4,7 @@ import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { transcribeAudio, sliceWords } from "@/lib/whisper";
 import { detectHighlights, type Highlight } from "@/lib/assemblyai";
 import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
+import { evaluateClip } from "@/lib/coach";
 import { extractAudio, extractThumbnail, tmpPath } from "@/lib/ffmpeg";
 import fs from "fs";
 import https from "https";
@@ -129,6 +130,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         const words = sliceWords(transcription.words, clipStart, clipEnd);
 
+        // Virality Coach — auto-check each clip so weak ones are flagged.
+        const clipTranscript = words.map((w) => w.word).join(" ").trim();
+        const report = await evaluateClip({
+          title: h.title,
+          transcript: clipTranscript,
+          durationSec: clipEnd - clipStart,
+        }).catch((err) => {
+          console.error("Coach auto-check failed for a clip:", err);
+          return null;
+        });
+
         await db.clip.create({
           data: {
             id: clipId,
@@ -139,6 +151,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             score: h.score,
             words: JSON.stringify(words),
             thumbnailUrl,
+            coachData: report
+              ? JSON.stringify({ report, videos: [], generatedAt: new Date().toISOString() })
+              : null,
           },
         });
       }

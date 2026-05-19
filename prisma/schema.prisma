@@ -33,6 +33,7 @@ model Clip {
   layoutConfig String   @default("{}")
   remixData    String?
   storyData    String?
+  coachData    String?
   exportUrl    String?
   exportKey    String?
   thumbnailUrl String?
