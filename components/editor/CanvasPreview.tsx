@@ -1,6 +1,7 @@
 "use client";
 
-import { forwardRef, useEffect, useRef } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
+import { Play, Pause } from "lucide-react";
 import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
@@ -83,6 +84,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
 }, ref) => {
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   // Sync background video with main video
   useEffect(() => {
@@ -96,6 +98,64 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
     main.addEventListener("pause", () => bg.pause());
     return () => main.removeEventListener("timeupdate", sync);
   }, []);
+
+  // Mirror the <video> element's play/pause state into React so the custom
+  // play button reflects reality (the video can pause itself on end / errors).
+  useEffect(() => {
+    const v = mainVideoRef.current;
+    if (!v) return;
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    v.addEventListener("play", onPlay);
+    v.addEventListener("pause", onPause);
+    return () => {
+      v.removeEventListener("play", onPlay);
+      v.removeEventListener("pause", onPause);
+    };
+  }, []);
+
+  // Snap playback into the trimmed range whenever the trim changes (e.g.
+  // after AI Auto-Cut or manual slider drag).
+  useEffect(() => {
+    const v = mainVideoRef.current;
+    if (!v) return;
+    if (v.currentTime < startTime || v.currentTime > endTime) {
+      v.currentTime = startTime;
+    }
+  }, [startTime, endTime]);
+
+  const clipDuration = Math.max(0.1, endTime - startTime);
+  // The `currentTime` prop coming in is already clip-relative (parent maps
+  // `videoTime - startTime`). Clamp it for display so the scrubber stays in
+  // bounds even mid-transition.
+  const localTime = Math.min(clipDuration, Math.max(0, currentTime));
+
+  function togglePlay() {
+    const v = mainVideoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      // Rewind to clip start if we ended (or are out of range) so the next
+      // play always replays the segment from the beginning.
+      if (v.currentTime >= endTime - 0.05 || v.currentTime < startTime) {
+        v.currentTime = startTime;
+      }
+      v.play().catch(() => null);
+    } else {
+      v.pause();
+    }
+  }
+
+  function handleScrub(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = mainVideoRef.current;
+    if (!v) return;
+    v.currentTime = startTime + parseFloat(e.target.value);
+  }
+
+  function formatTime(s: number) {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  }
 
   function bgStyle(): React.CSSProperties {
     if (layout.bgType === "color") return { background: layout.bgColor };
@@ -128,23 +188,26 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         <div className="absolute inset-0" style={bgStyle()} />
       )}
 
-      {/* Main video (centered, letterboxed) */}
+      {/* Main video (centered, letterboxed). No native controls — we expose
+          a clip-local scrubber below so the user only ever sees the trimmed
+          segment, not the full source video. */}
       <video
         ref={mainVideoRef}
         src={videoSrc}
-        className="absolute inset-0 w-full h-full object-contain z-10"
-        controls
+        className="absolute inset-0 w-full h-full object-contain z-10 cursor-pointer"
         playsInline
         preload="metadata"
+        onClick={togglePlay}
         onTimeUpdate={(e) => {
           const t = e.currentTarget.currentTime;
           onTimeUpdate(t);
-          // Clamp to clip range
           if (t >= endTime) e.currentTarget.pause();
         }}
-        onLoadedMetadata={(e) => onLoadedMetadata(e.currentTarget.duration)}
-        onPlay={(e) => {
-          if (e.currentTarget.currentTime < startTime) e.currentTarget.currentTime = startTime;
+        onLoadedMetadata={(e) => {
+          onLoadedMetadata(e.currentTarget.duration);
+          // Snap to the clip start on initial load so the first frame the
+          // user sees is the start of the trimmed segment.
+          e.currentTarget.currentTime = startTime;
         }}
       />
 
@@ -153,6 +216,29 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         words={words} currentTime={currentTime}
         config={captionConfig} enabled={captionsEnabled}
       />
+
+      {/* Clip-local control bar — only spans the trimmed segment */}
+      <div className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-3 pt-8 flex items-center gap-2">
+        <button
+          onClick={togglePlay}
+          className="w-8 h-8 rounded-full bg-white/95 hover:bg-white text-black flex items-center justify-center shrink-0 transition-colors"
+          aria-label={isPlaying ? "Pause" : "Play"}
+        >
+          {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={clipDuration}
+          step={0.05}
+          value={localTime}
+          onChange={handleScrub}
+          className="flex-1 h-1 accent-brand-500 cursor-pointer"
+        />
+        <span className="text-white text-[10px] font-mono tabular-nums shrink-0">
+          {formatTime(localTime)} / {formatTime(clipDuration)}
+        </span>
+      </div>
     </div>
   );
 });
