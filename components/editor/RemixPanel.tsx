@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import {
   Sparkles, Loader2, TrendingUp, Copy, Check, ExternalLink,
-  Wand2, AlertCircle, RefreshCw,
+  Wand2, AlertCircle, RefreshCw, Music2, Film, Plus,
 } from "lucide-react";
 import type { CaptionStyle } from "@/lib/captions";
 
@@ -13,18 +13,24 @@ interface ViralVideo {
   thumbnailUrl: string; viewCount: number; viewsPerDay: number;
   durationSec: number; viralScore: number;
 }
-interface RemixRecipe {
-  matchedFormat: string; whyItWorks: string; hook: string; hookText: string;
+interface EditBeat {
+  timeRange: string; cut: string; overlay: string; sound: string;
+}
+interface CloneRecipe {
+  styleSummary: string; hook: string; hookText: string;
   suggestedTitle: string; captionStyle: CaptionStyle; hashtags: string[];
-  recutNote: string; predictedScore: number;
+  musicVibe: string; editBeats: EditBeat[]; predictedScore: number;
+  clonedFrom: { videoId: string; title: string }[];
 }
 interface Remix {
-  recipe: RemixRecipe; videos: ViralVideo[]; queries: string[]; generatedAt: string;
+  candidates: ViralVideo[]; queries: string[];
+  recipe: CloneRecipe | null; pickedIds?: string[]; generatedAt: string;
 }
 
 interface Props {
   clipId: string;
-  onApplyStyle: (style: CaptionStyle) => void;
+  previewActive: boolean;
+  onPreview: (recipe: CloneRecipe) => void;
 }
 
 function compact(n: number): string {
@@ -33,7 +39,6 @@ function compact(n: number): string {
   return String(n);
 }
 
-// Small copy-to-clipboard control reused across the recipe fields.
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -64,45 +69,81 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function RemixPanel({ clipId, onApplyStyle }: Props) {
+export default function RemixPanel({ clipId, previewActive, onPreview }: Props) {
   const [remix, setRemix] = useState<Remix | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [picks, setPicks] = useState<Set<string>>(new Set());
+  const [finding, setFinding] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [applied, setApplied] = useState(false);
 
-  // Load any cached remix for this clip.
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`/api/remix/${clipId}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.remix) setRemix(data.remix);
+          if (data.remix) {
+            setRemix(data.remix);
+            if (data.remix.pickedIds) setPicks(new Set(data.remix.pickedIds));
+          }
         }
       } catch {}
       setInitialLoad(false);
     })();
   }, [clipId]);
 
-  async function generate() {
-    setLoading(true);
+  async function findRefs() {
+    setFinding(true);
     setError(null);
     try {
       const res = await fetch(`/api/remix/${clipId}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Failed to generate remix");
+        setError(data.error || "Failed to find references");
+      } else {
+        setRemix(data.remix);
+        setPicks(new Set());
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    }
+    setFinding(false);
+  }
+
+  async function cloneFromPicks() {
+    if (picks.size === 0) return;
+    setCloning(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/remix/${clipId}/clone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoIds: [...picks] }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to clone style");
       } else {
         setRemix(data.remix);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
     }
-    setLoading(false);
+    setCloning(false);
+  }
+
+  function togglePick(videoId: string) {
+    setPicks((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoId)) next.delete(videoId);
+      else if (next.size < 5) next.add(videoId);
+      return next;
+    });
   }
 
   const recipe = remix?.recipe;
+  const candidates = remix?.candidates || [];
 
   return (
     <div className="p-4 space-y-4">
@@ -111,30 +152,30 @@ export default function RemixPanel({ clipId, onApplyStyle }: Props) {
           <Sparkles className="w-4 h-4 text-brand-400" /> Viral Remix
         </p>
         <p className="text-xs text-surface-500 mt-0.5">
-          Find viral videos in your niche and remix this clip into their proven format.
+          Find 10 viral videos in your niche, pick the ones to copy, and let AI remix your clip in their exact style.
         </p>
       </div>
 
-      {/* Generate / regenerate */}
+      {/* Find / refind */}
       {!initialLoad && (
         <button
-          onClick={generate}
-          disabled={loading}
+          onClick={findRefs}
+          disabled={finding || cloning}
           className="w-full flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs py-2.5 rounded-lg font-medium transition-colors"
         >
-          {loading ? (
-            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analysing trends…</>
-          ) : remix ? (
-            <><RefreshCw className="w-3.5 h-3.5" /> Regenerate</>
+          {finding ? (
+            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Searching YouTube…</>
+          ) : candidates.length ? (
+            <><RefreshCw className="w-3.5 h-3.5" /> Find new references</>
           ) : (
-            <><Wand2 className="w-3.5 h-3.5" /> Find viral matches</>
+            <><Wand2 className="w-3.5 h-3.5" /> Find 10 viral references</>
           )}
         </button>
       )}
 
-      {loading && (
+      {finding && (
         <p className="text-[10px] text-surface-500 text-center leading-relaxed">
-          Searching YouTube for viral videos, scoring them, and building your remix recipe. This takes ~15-30s.
+          Pulling the top 10 viral videos in your niche. ~10-20s.
         </p>
       )}
 
@@ -145,50 +186,188 @@ export default function RemixPanel({ clipId, onApplyStyle }: Props) {
         </div>
       )}
 
-      {/* Recipe */}
+      {/* Candidate gallery — pick the videos to clone the style of */}
+      {candidates.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] text-surface-500 uppercase tracking-wider">
+              References ({candidates.length})
+            </p>
+            <p className="text-[10px] text-brand-300 font-semibold">
+              {picks.size} picked{picks.size > 0 ? ` / 5 max` : ""}
+            </p>
+          </div>
+          <div className="space-y-2">
+            {candidates.map((v) => {
+              const picked = picks.has(v.videoId);
+              return (
+                <div
+                  key={v.videoId}
+                  className={`flex gap-2 rounded-lg p-1.5 transition-colors border ${
+                    picked
+                      ? "bg-brand-900/40 border-brand-600"
+                      : "bg-surface-700/50 border-transparent hover:bg-surface-700"
+                  }`}
+                >
+                  <div className="relative w-20 shrink-0 aspect-video rounded overflow-hidden bg-surface-600">
+                    {v.thumbnailUrl && (
+                      <img src={v.thumbnailUrl} alt={v.title} className="w-full h-full object-cover" />
+                    )}
+                    <span className="absolute bottom-0.5 right-0.5 bg-black/80 text-white text-[8px] px-1 rounded">
+                      {v.durationSec}s
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] text-white leading-tight line-clamp-2">
+                      {v.title}
+                    </p>
+                    <p className="text-[9px] text-surface-500 mt-0.5 truncate">{v.channelTitle}</p>
+                    <p className="text-[9px] text-surface-400 mt-0.5">
+                      <span className="text-green-400 font-medium">{compact(v.viewCount)}</span>
+                      {" · "}{compact(v.viewsPerDay)}/day
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <button
+                        onClick={() => togglePick(v.videoId)}
+                        className={`flex-1 flex items-center justify-center gap-1 text-[10px] font-medium py-1 rounded transition-colors ${
+                          picked
+                            ? "bg-brand-600 text-white"
+                            : "bg-surface-600 hover:bg-surface-500 text-white"
+                        }`}
+                      >
+                        {picked ? (
+                          <><Check className="w-3 h-3" /> Picked</>
+                        ) : (
+                          <><Plus className="w-3 h-3" /> Pick</>
+                        )}
+                      </button>
+                      <a
+                        href={v.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[10px] text-surface-300 hover:text-brand-300 px-1.5 py-1 transition-colors"
+                        title="Watch on YouTube"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Sticky-ish CTA — only appears once 1+ refs are picked */}
+          {picks.size > 0 && (
+            <button
+              onClick={cloneFromPicks}
+              disabled={cloning}
+              className="w-full mt-3 flex items-center justify-center gap-1.5 bg-gradient-to-r from-brand-500 to-purple-600 hover:from-brand-400 hover:to-purple-500 disabled:opacity-50 text-white text-xs py-2.5 rounded-lg font-semibold transition-colors"
+            >
+              {cloning ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Cloning style…</>
+              ) : (
+                <><Sparkles className="w-3.5 h-3.5" /> Remix my clip in {picks.size === 1 ? "this style" : `these ${picks.size} styles`}</>
+              )}
+            </button>
+          )}
+
+          {cloning && (
+            <p className="text-[10px] text-surface-500 text-center leading-relaxed mt-1">
+              Studying the picks and building a beat-by-beat plan. ~10-20s.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Clone recipe — the AI's style-clone plan for the user's clip */}
       {recipe && (
-        <div className="space-y-3">
-          {/* Format + predicted score */}
-          <div className="bg-gradient-to-br from-brand-900/50 to-surface-700/40 border border-brand-800/60 rounded-xl p-3">
+        <div className="space-y-3 pt-2 border-t border-surface-700">
+          {/* Style summary + predicted score */}
+          <div className="bg-gradient-to-br from-brand-900/50 to-purple-900/40 border border-brand-800/60 rounded-xl p-3">
             <div className="flex items-center justify-between gap-2 mb-1">
               <span className="text-[10px] text-brand-300 uppercase tracking-wider font-semibold">
-                Matched format
+                Cloned style
               </span>
               <span className="inline-flex items-center gap-1 bg-brand-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                 <TrendingUp className="w-3 h-3" /> {recipe.predictedScore}% viral
               </span>
             </div>
-            <p className="text-sm text-white font-semibold">{recipe.matchedFormat}</p>
-            {recipe.whyItWorks && (
-              <p className="text-[11px] text-surface-400 mt-1 leading-relaxed">{recipe.whyItWorks}</p>
+            <p className="text-xs text-white leading-relaxed">{recipe.styleSummary}</p>
+            {recipe.clonedFrom?.length > 0 && (
+              <p className="text-[10px] text-surface-400 mt-2 line-clamp-2">
+                <span className="text-surface-500">From: </span>
+                {recipe.clonedFrom.map((c) => `"${c.title}"`).join(", ")}
+              </p>
             )}
           </div>
+
+          {/* Preview Edit — applies the AI's planned changes to the canvas
+              without writing to the DB. The editor shows a Save/Discard bar
+              so you can A/B and confirm. */}
+          <button
+            onClick={() => onPreview(recipe)}
+            disabled={previewActive}
+            className="w-full flex items-center justify-center gap-1.5 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-60 text-black text-xs py-2.5 rounded-lg font-semibold transition-colors"
+          >
+            {previewActive ? (
+              <><Check className="w-3.5 h-3.5" /> Previewing — use Save / Discard below</>
+            ) : (
+              <><Sparkles className="w-3.5 h-3.5" /> Preview this edit on my clip</>
+            )}
+          </button>
+          <p className="text-[10px] text-surface-500 leading-relaxed -mt-1">
+            Shows the hook overlay, title, and caption style live on the preview without saving.
+            Use the Save / Discard bar that appears below the preview to commit or revert.
+          </p>
 
           <Field label="3-second hook" value={recipe.hook} />
           <Field label="On-screen hook text" value={recipe.hookText} />
           <Field label="Suggested title" value={recipe.suggestedTitle} />
-          <Field label="Re-cut tip" value={recipe.recutNote} />
 
-          {/* Caption style — applies straight to the editor */}
+          {/* Music vibe */}
+          {recipe.musicVibe && (
+            <div>
+              <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <Music2 className="w-3 h-3" /> Music / sound vibe
+              </p>
+              <div className="flex items-start gap-2 bg-surface-700/60 rounded-lg px-2.5 py-2">
+                <p className="text-xs text-white flex-1 leading-relaxed">{recipe.musicVibe}</p>
+                <CopyButton text={recipe.musicVibe} />
+              </div>
+            </div>
+          )}
+
+          {/* Edit beats — the beat-by-beat plan */}
+          {recipe.editBeats?.length > 0 && (
+            <div>
+              <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <Film className="w-3 h-3" /> Edit plan ({recipe.editBeats.length} beats)
+              </p>
+              <div className="space-y-1.5">
+                {recipe.editBeats.map((b, i) => (
+                  <div
+                    key={i}
+                    className="bg-surface-700/60 rounded-lg p-2 border-l-2 border-brand-500"
+                  >
+                    <p className="text-[10px] text-brand-300 font-mono font-bold mb-1">{b.timeRange}</p>
+                    {b.cut && <p className="text-[11px] text-white"><span className="text-surface-500">Cut:</span> {b.cut}</p>}
+                    {b.overlay && <p className="text-[11px] text-white mt-0.5"><span className="text-surface-500">Text:</span> {b.overlay}</p>}
+                    {b.sound && <p className="text-[11px] text-white mt-0.5"><span className="text-surface-500">Sound:</span> {b.sound}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Caption style — shown as info; applied via the Preview button. */}
           <div>
             <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1">
-              Recommended caption style
+              Caption style
             </p>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-white capitalize bg-surface-700/60 rounded-lg px-2.5 py-2 flex-1">
-                {recipe.captionStyle.replace("-", " ")}
-              </span>
-              <button
-                onClick={() => {
-                  onApplyStyle(recipe.captionStyle);
-                  setApplied(true);
-                  setTimeout(() => setApplied(false), 1800);
-                }}
-                className="shrink-0 flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white text-xs px-3 py-2 rounded-lg font-medium transition-colors"
-              >
-                {applied ? <><Check className="w-3.5 h-3.5" /> Applied</> : "Apply"}
-              </button>
-            </div>
+            <span className="text-xs text-white capitalize bg-surface-700/60 rounded-lg px-2.5 py-2 block">
+              {recipe.captionStyle.replace("-", " ")}
+            </span>
           </div>
 
           {/* Hashtags */}
@@ -208,52 +387,6 @@ export default function RemixPanel({ clipId, onApplyStyle }: Props) {
             </div>
           )}
         </div>
-      )}
-
-      {/* Viral reference videos */}
-      {remix && remix.videos.length > 0 && (
-        <div>
-          <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-2">
-            Viral references ({remix.videos.length})
-          </p>
-          <div className="space-y-2">
-            {remix.videos.map((v) => (
-              <a
-                key={v.videoId}
-                href={v.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex gap-2 bg-surface-700/50 hover:bg-surface-700 rounded-lg p-1.5 transition-colors group"
-              >
-                <div className="relative w-20 shrink-0 aspect-video rounded overflow-hidden bg-surface-600">
-                  {v.thumbnailUrl && (
-                    <img src={v.thumbnailUrl} alt={v.title} className="w-full h-full object-cover" />
-                  )}
-                  <span className="absolute bottom-0.5 right-0.5 bg-black/80 text-white text-[8px] px-1 rounded">
-                    {v.durationSec}s
-                  </span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] text-white leading-tight line-clamp-2 group-hover:text-brand-300 transition-colors">
-                    {v.title}
-                  </p>
-                  <p className="text-[9px] text-surface-500 mt-0.5 truncate">{v.channelTitle}</p>
-                  <p className="text-[9px] text-surface-400 mt-0.5 flex items-center gap-1">
-                    <span className="text-green-400 font-medium">{compact(v.viewCount)} views</span>
-                    · {compact(v.viewsPerDay)}/day
-                    <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-100" />
-                  </p>
-                </div>
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {remix && (
-        <p className="text-[9px] text-surface-600 text-center">
-          Remixes the format only — never another creator&apos;s footage.
-        </p>
       )}
     </div>
   );

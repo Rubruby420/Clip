@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
-import { exportClip, generateSRT, tmpPath } from "@/lib/ffmpeg";
+import { exportClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
 import fs from "fs";
 import https from "https";
 import http from "http";
@@ -30,6 +30,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const videoPath = tmpPath(`export_src_${exportId}.mp4`);
   const outPath = tmpPath(`export_out_${exportId}.mp4`);
   const srtPath = tmpPath(`export_${exportId}.srt`);
+  const hookPath = tmpPath(`export_hook_${exportId}.ass`);
+  const musicPath = tmpPath(`export_music_${exportId}.mp3`);
 
   try {
     // Download source video
@@ -43,14 +45,59 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       fs.writeFileSync(srtPath, srt);
     }
 
+    // Build the unified overlay ASS — hook + every beat overlay — so the
+    // exported mp4 matches what the user previewed in the editor.
+    let overlayText = "";
+    let overlayDuration = 3;
+    let musicUrl = "";
+    let musicVolume = 0.25;
+    type Beat = { text: string; emoji: string; start: number; end: number; position: "top" | "center" | "bottom" };
+    let beats: Beat[] = [];
+    try {
+      const lc = clip.layoutConfig ? JSON.parse(clip.layoutConfig) : {};
+      overlayText = String(lc.overlayText || "").trim();
+      overlayDuration = Number(lc.overlayDuration) || 3;
+      musicUrl = String(lc.musicUrl || "").trim();
+      musicVolume = Number(lc.musicVolume ?? 0.25);
+      if (Array.isArray(lc.beatOverlays)) {
+        beats = lc.beatOverlays
+          .map((b: Record<string, unknown>) => ({
+            text: String(b.text ?? ""),
+            emoji: String(b.emoji ?? ""),
+            start: Number(b.start ?? 0),
+            end: Number(b.end ?? 0),
+            position: (b.position === "top" || b.position === "bottom" ? b.position : "center") as "top" | "center" | "bottom",
+          }))
+          .filter((b: Beat) => (b.text || b.emoji) && b.end > b.start);
+      }
+    } catch {}
+
+    // Download the background music track if one was picked.
+    if (musicUrl) {
+      try { await downloadFile(musicUrl, musicPath); } catch (e) { console.warn("Music download failed:", e); }
+    }
+
+    const ar = aspectRatio as "9:16" | "16:9" | "1:1";
+    const w = ar === "16:9" ? 1920 : 1080;
+    const h = ar === "16:9" ? 1080 : ar === "9:16" ? 1920 : 1080;
+    if (overlayText || beats.length > 0) {
+      fs.writeFileSync(
+        hookPath,
+        generateOverlayAss({ hookText: overlayText, hookDuration: overlayDuration, beats, videoW: w, videoH: h })
+      );
+    }
+
     // Render with FFmpeg
     await exportClip({
       inputPath: videoPath,
       outputPath: outPath,
       startTime: clip.startTime,
       endTime: clip.endTime,
-      aspectRatio: aspectRatio as "9:16" | "16:9" | "1:1",
+      aspectRatio: ar,
       subtitlePath: fs.existsSync(srtPath) ? srtPath : undefined,
+      hookOverlayAssPath: fs.existsSync(hookPath) ? hookPath : undefined,
+      musicPath: fs.existsSync(musicPath) ? musicPath : undefined,
+      musicVolume,
       blurBackground,
     });
 
@@ -70,6 +117,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error("Export error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    [videoPath, outPath, srtPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+    [videoPath, outPath, srtPath, hookPath, musicPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
   }
 }

@@ -78,10 +78,13 @@ lib/
    OPENAI_API_KEY=
    ASSEMBLYAI_API_KEY=
    YOUTUBE_API_KEY=
+   JAMENDO_CLIENT_ID=
    DATABASE_URL="file:C:/Users/tania/ClipData/dev.db"
    ```
    `YOUTUBE_API_KEY` (free): Google Cloud Console → create a project → enable
    "YouTube Data API v3" → Credentials → Create credentials → API key.
+   `JAMENDO_CLIENT_ID` (free): https://developer.jamendo.com → sign up →
+   create an app → copy the Client ID. Used for AI Remix background music.
    `DATABASE_URL` must point OUTSIDE OneDrive (see gotcha below).
 3. `npm run db:push` — creates the SQLite database
 4. `npm run dev` — starts on **port 3000** (locked; see note below)
@@ -143,11 +146,40 @@ Other commands: `npm run build`, `npm run db:studio`.
   `$env:DATABASE_URL='file:C:/Users/tania/ClipData/dev.db'; npm run db:push` (PowerShell).
 - **`prisma generate` fails with `EPERM` while `npm run dev` is running** — the dev
   server locks the query-engine DLL. Stop the dev server first, then regenerate.
-- **Viral Remix** (`lib/youtube.ts` + `lib/remix.ts`, `api/remix/[clipId]`, editor
-  "Viral" tab): searches YouTube for viral videos in the clip's niche, then has
-  `gpt-4o-mini` build a remix recipe (hook, title, caption style, hashtags, re-cut
-  tips). It adapts the *format* only — never reuses footage. Result is cached in
-  `Clip.remixData` (JSON).
+- **Viral Remix** (`lib/youtube.ts` + `lib/remix.ts`, `api/remix/[clipId]`
+  + `api/remix/[clipId]/clone`, editor "Viral" tab): two-stage flow. (1) Find
+  10 viral references on YouTube in the clip's niche. (2) User picks 1-5 to
+  clone the style of → `gpt-4o-mini` builds a beat-by-beat clone recipe
+  (style summary, hook + on-screen text, suggested title, music vibe,
+  hashtags, 4-6 editBeats with `timeRange/cut/overlay/emoji/sound`,
+  predicted virality). The recipe gets PREVIEWED on the clip (Preview-
+  before-apply mode — see next bullet) and on Save commits the hook overlay,
+  caption style, title, beat overlays, and background music all at once.
+  Adapts *format* only — never reuses footage. Cached in `Clip.remixData`.
+- **Preview-before-apply** for Viral Remix: clicking "Preview this edit on my
+  clip" in the Viral panel applies the AI's planned changes to the live
+  canvas (hook overlay, beat overlays, caption style, title, background
+  music) but does NOT auto-save. A yellow `Previewing AI remix` bar with
+  Save/Discard appears in the editor; the auto-save effect is gated on
+  `!previewMode`. Save commits via a single PATCH; Discard restores the
+  pre-preview snapshot.
+- **Hook + beat overlays** (`LayoutPanel.LayoutConfig.overlayText`,
+  `LayoutConfig.beatOverlays`, `CanvasPreview`, `lib/ffmpeg.generateOverlayAss`):
+  the editor renders a big top-of-screen hook for the first N seconds plus
+  beat-by-beat text+emoji "stamps" cycling through top/center/bottom
+  positions. On export, a single ASS subtitle file containing every event is
+  chained as a second `subtitles=` filter after the captions. Use single
+  quotes + colon-escape on the ASS path (same Windows gotcha as the captions
+  SRT — see below).
+- **AI background music** (`lib/music.ts`, `api/clips/[id]/music`, music
+  fields on `LayoutConfig`): when previewing a Remix, the recipe's
+  `musicVibe` string is sent to Jamendo's `/v3.0/tracks/` API; the panel
+  picks a random track from the top 5 popular matches in the duration range,
+  saves `{musicUrl, musicTitle, musicArtist}` into `layoutConfig`. The
+  CanvasPreview plays it via a synced `<audio>` (play/pause/seeked listeners
+  on the main video). FFmpeg export adds the mp3 as input #1 and mixes via
+  `[1:a]volume=V,aloop[mus];[0:a][mus]amix=2:duration=first`. The clip-local
+  music chip below the preview has a volume slider and ✕ to remove.
 - **AI Auto-Cut** (`selectBestSegment` in `lib/highlights.ts`, `api/clips/[id]/autocut`):
   the editor opens with a blocking choice modal — AI Auto-Cut or Edit Manually. AI
   picks the tightest segment within the clip; the result is applied as a normal trim

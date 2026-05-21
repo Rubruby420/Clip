@@ -84,6 +84,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
 }, ref) => {
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
+  const musicRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
   // Sync background video with main video
@@ -114,6 +115,32 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
     };
   }, []);
 
+  // Sync the background music <audio> with the main video: same play/pause,
+  // same clip-local position. The music starts at 0 every time the clip
+  // restarts, so it doesn't drift through the source's middle.
+  useEffect(() => {
+    const v = mainVideoRef.current;
+    const a = musicRef.current;
+    if (!v || !a) return;
+    a.volume = layout.musicVolume ?? 0.25;
+    const onPlay = () => {
+      a.currentTime = Math.max(0, v.currentTime - startTime);
+      a.play().catch(() => null);
+    };
+    const onPause = () => a.pause();
+    const onSeek = () => {
+      a.currentTime = Math.max(0, v.currentTime - startTime);
+    };
+    v.addEventListener("play", onPlay);
+    v.addEventListener("pause", onPause);
+    v.addEventListener("seeked", onSeek);
+    return () => {
+      v.removeEventListener("play", onPlay);
+      v.removeEventListener("pause", onPause);
+      v.removeEventListener("seeked", onSeek);
+    };
+  }, [layout.musicUrl, layout.musicVolume, startTime]);
+
   // Snap playback into the trimmed range whenever the trim changes (e.g.
   // after AI Auto-Cut or manual slider drag).
   useEffect(() => {
@@ -123,6 +150,14 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
       v.currentTime = startTime;
     }
   }, [startTime, endTime]);
+
+  // When the hook overlay text is set (e.g. AI Remix Apply), rewind to the
+  // clip's start so the user immediately sees the burned-in overlay.
+  useEffect(() => {
+    const v = mainVideoRef.current;
+    if (!v || !layout.overlayText) return;
+    v.currentTime = startTime;
+  }, [layout.overlayText, startTime]);
 
   const clipDuration = Math.max(0.1, endTime - startTime);
   // The `currentTime` prop coming in is already clip-relative (parent maps
@@ -211,11 +246,86 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         }}
       />
 
+      {/* Background music — synced to the video via play/pause/seek effects. */}
+      {layout.musicUrl && (
+        <audio ref={musicRef} src={layout.musicUrl} preload="auto" />
+      )}
+
       {/* Caption overlay */}
       <CaptionOverlay
         words={words} currentTime={currentTime}
         config={captionConfig} enabled={captionsEnabled}
       />
+
+      {/* Hook text overlay — burned-in big text for the first N seconds.
+          Driven by layout.overlayText / layout.overlayDuration; set by AI
+          Remix's "Apply to my clip" or edited by hand in Layout panel. */}
+      {layout.overlayText && currentTime >= 0 && currentTime <= layout.overlayDuration && (
+        <div className="absolute inset-0 z-20 flex items-start justify-center pt-[18%] px-4 pointer-events-none">
+          <p
+            className="text-center font-black uppercase leading-tight"
+            style={{
+              fontFamily: '"Impact", "Arial Black", sans-serif',
+              fontSize: "clamp(20px, 6vw, 38px)",
+              color: "#FFFFFF",
+              WebkitTextStroke: "1.5px #000",
+              textShadow: "0 4px 18px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.95)",
+              letterSpacing: "-0.01em",
+              maxWidth: "92%",
+            }}
+          >
+            {layout.overlayText}
+          </p>
+        </div>
+      )}
+
+      {/* Beat overlays — pop in at each editBeat's timestamp. Mix of small
+          uppercase text and a big emoji "stamp" for that beat. */}
+      {layout.beatOverlays?.map((b, i) => {
+        const visible = currentTime >= b.start && currentTime <= b.end;
+        if (!visible) return null;
+        const posClass =
+          b.position === "top" ? "items-start pt-[10%]" :
+          b.position === "bottom" ? "items-end pb-[22%]" :
+          "items-center";
+        return (
+          <div
+            key={i}
+            className={`absolute inset-0 z-20 flex justify-center px-4 pointer-events-none ${posClass}`}
+            style={{ animation: "beatPop 0.25s ease-out" }}
+          >
+            <div className="flex flex-col items-center gap-1">
+              {b.emoji && (
+                <span style={{ fontSize: "clamp(28px, 9vw, 60px)", lineHeight: 1, filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.6))" }}>
+                  {b.emoji}
+                </span>
+              )}
+              {b.text && (
+                <p
+                  className="text-center font-black uppercase leading-tight"
+                  style={{
+                    fontFamily: '"Impact", "Arial Black", sans-serif',
+                    fontSize: "clamp(14px, 4.5vw, 28px)",
+                    color: "#FFEB3B",
+                    WebkitTextStroke: "1.5px #000",
+                    textShadow: "0 3px 10px rgba(0,0,0,0.95)",
+                    maxWidth: "92%",
+                  }}
+                >
+                  {b.text}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <style jsx>{`
+        @keyframes beatPop {
+          0%   { transform: scale(0.6); opacity: 0; }
+          60%  { transform: scale(1.15); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
 
       {/* Clip-local control bar — only spans the trimmed segment */}
       <div className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-3 pt-8 flex items-center gap-2">

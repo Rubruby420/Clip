@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { searchViralVideos } from "@/lib/youtube";
-import { generateSearchQueries, generateRemixRecipe } from "@/lib/remix";
+import { generateSearchQueries } from "@/lib/remix";
 
 interface ClipWord { word: string; start: number; end: number }
 
-// GET — return the cached remix for this clip (if any).
+// GET — return the cached remix state for this clip (candidates + optional recipe).
 export async function GET(_: NextRequest, { params }: { params: Promise<{ clipId: string }> }) {
   const { clipId } = await params;
   const clip = await db.clip.findUnique({ where: { id: clipId } });
@@ -18,23 +18,22 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ clipId
   return NextResponse.json({ remix });
 }
 
-// POST — generate a fresh viral-remix recipe for this clip.
+// POST — find 10 viral reference candidates for this clip. The user then
+// picks which ones they want to clone the style of (handled by the /clone
+// subroute), so this stage no longer produces a recipe.
 export async function POST(_: NextRequest, { params }: { params: Promise<{ clipId: string }> }) {
   const { clipId } = await params;
   const clip = await db.clip.findUnique({ where: { id: clipId } });
   if (!clip) return NextResponse.json({ error: "Clip not found" }, { status: 404 });
 
   try {
-    // Build the clip transcript from its word timestamps.
     let words: ClipWord[] = [];
     try { words = JSON.parse(clip.words || "[]"); } catch {}
     const transcript = words.map((w) => w.word).join(" ").trim();
 
-    // 1. Decide what to search for.
     const queries = await generateSearchQueries(clip.title, transcript);
     if (queries.length === 0) queries.push(clip.title);
 
-    // 2. Find viral reference videos.
     const videos = await searchViralVideos(queries);
     if (videos.length === 0) {
       return NextResponse.json(
@@ -43,18 +42,10 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ clipI
       );
     }
 
-    // 3. Turn the references into a remix recipe for this clip.
-    const recipe = await generateRemixRecipe({
-      title: clip.title,
-      transcript,
-      durationSec: clip.endTime - clip.startTime,
-      videos,
-    });
-
     const remix = {
-      recipe,
-      videos: videos.slice(0, 6),
+      candidates: videos.slice(0, 10),
       queries,
+      recipe: null,
       generatedAt: new Date().toISOString(),
     };
 
@@ -62,9 +53,9 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ clipI
 
     return NextResponse.json({ remix });
   } catch (err) {
-    console.error("Remix error:", err);
+    console.error("Remix search error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to generate remix" },
+      { error: err instanceof Error ? err.message : "Failed to find references" },
       { status: 500 }
     );
   }

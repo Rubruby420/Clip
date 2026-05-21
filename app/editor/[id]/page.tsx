@@ -54,6 +54,20 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [showEditChoice, setShowEditChoice] = useState(true);
   const [aiCutting, setAiCutting] = useState(false);
   const [aiCutReason, setAiCutReason] = useState<string | null>(null);
+  const [remixApplied, setRemixApplied] = useState<{
+    overlay: string; title: string; style: string;
+  } | null>(null);
+
+  // Preview-before-apply mode: while ON, AI Remix changes are reflected in
+  // the canvas/preview only (NO DB write). The user can Save to commit or
+  // Discard to revert from the snapshot.
+  const [previewMode, setPreviewMode] = useState(false);
+  const [previewSnapshot, setPreviewSnapshot] = useState<{
+    layout: LayoutConfig;
+    captionStyle: string;
+    captionsEnabled: boolean;
+    title: string;
+  } | null>(null);
 
   // Load clip + project video
   useEffect(() => {
@@ -97,6 +111,9 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
 
   useEffect(() => {
     if (!clip) return;
+    // While previewing a remix, hold all writes — the user hasn't confirmed
+    // they want these changes yet. Save() resumes when they hit "Save changes".
+    if (previewMode) return;
     const timer = setTimeout(() => {
       save({
         startTime,
@@ -107,7 +124,41 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     }, 800);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startTime, endTime, layout, captionConfig.style]);
+  }, [startTime, endTime, layout, captionConfig.style, previewMode]);
+
+  async function handleSavePreview() {
+    if (!clip) return;
+    // Persist everything in one shot now that the user has confirmed.
+    await fetch(`/api/clips/${clip.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: clip.title,
+        layoutConfig: JSON.stringify(layout),
+        captionStyle: captionConfig.style,
+      }),
+    });
+    setPreviewMode(false);
+    setPreviewSnapshot(null);
+    setRemixApplied({
+      overlay: layout.overlayText,
+      title: clip.title,
+      style: captionConfig.style,
+    });
+  }
+
+  function handleDiscardPreview() {
+    if (!previewSnapshot) {
+      setPreviewMode(false);
+      return;
+    }
+    setLayout(previewSnapshot.layout);
+    setCaptionConfig((prev) => ({ ...prev, style: previewSnapshot.captionStyle }));
+    setCaptionsEnabled(previewSnapshot.captionsEnabled);
+    setClip((prev) => (prev ? { ...prev, title: previewSnapshot.title } : prev));
+    setPreviewSnapshot(null);
+    setPreviewMode(false);
+  }
 
   async function handleExport() {
     setExporting(true);
@@ -275,9 +326,71 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           {activeTab === "viral" && (
             <RemixPanel
               clipId={clip.id}
-              onApplyStyle={(style) => {
-                setCaptionConfig((prev) => ({ ...prev, style }));
+              previewActive={previewMode}
+              onPreview={async (rec) => {
+                // Snapshot the current state so Discard can restore it.
+                setPreviewSnapshot({
+                  layout: { ...layout },
+                  captionStyle: captionConfig.style,
+                  captionsEnabled,
+                  title: clip?.title ?? "",
+                });
+
+                // Kick off the music pick in the background — don't block the
+                // visual preview on it. The track loads in moments later.
+                if (rec.musicVibe && clip) {
+                  fetch(`/api/clips/${clip.id}/music`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ vibe: rec.musicVibe }),
+                  })
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((data) => {
+                      if (data?.track) {
+                        setLayout((prev) => ({
+                          ...prev,
+                          musicUrl: data.track.url,
+                          musicTitle: data.track.title,
+                          musicArtist: data.track.artist,
+                        }));
+                      }
+                    })
+                    .catch(() => null);
+                }
+
+                // Translate the AI's editBeats into actual on-canvas overlays
+                // anchored to clip-local timestamps. "0-2s" → start 0, end 2.
+                const clipLen = endTime - startTime;
+                const positions: Array<"top" | "center" | "bottom"> = ["top", "center", "bottom"];
+                const beatOverlays = (rec.editBeats || [])
+                  .map((b, i) => {
+                    const m = b.timeRange?.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
+                    if (!m) return null;
+                    const start = Math.max(0, Math.min(clipLen, parseFloat(m[1])));
+                    const end = Math.max(start + 0.5, Math.min(clipLen, parseFloat(m[2])));
+                    if (!b.overlay && !b.emoji) return null;
+                    return {
+                      text: (b.overlay || "").toUpperCase(),
+                      emoji: b.emoji || "",
+                      start,
+                      end,
+                      position: positions[i % positions.length],
+                    };
+                  })
+                  .filter(Boolean) as typeof DEFAULT_LAYOUT.beatOverlays;
+
+                const overlay = (rec.hookText || rec.hook || "").trim();
+                setLayout((prev) => ({
+                  ...prev,
+                  overlayText: overlay || prev.overlayText,
+                  beatOverlays,
+                }));
+                setCaptionConfig((prev) => ({ ...prev, style: rec.captionStyle }));
                 setCaptionsEnabled(true);
+                if (rec.suggestedTitle?.trim()) {
+                  setClip((prev) => (prev ? { ...prev, title: rec.suggestedTitle.trim() } : prev));
+                }
+                setPreviewMode(true);
               }}
             />
           )}
@@ -333,6 +446,98 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             onClick={() => setAiCutReason(null)}
             className="text-surface-500 hover:text-white text-sm leading-none"
             title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Preview-mode bar — the user is reviewing AI's planned changes.
+          Nothing has been saved yet; Save commits, Discard reverts. */}
+      {previewMode && (
+        <div className="shrink-0 px-4 py-3 bg-gradient-to-r from-yellow-900/60 to-amber-900/60 border-t-2 border-yellow-500 flex items-center gap-3">
+          <Sparkles className="w-4 h-4 text-yellow-300 shrink-0" />
+          <div className="flex-1 text-xs text-yellow-100 leading-relaxed">
+            <span className="font-bold">Previewing AI remix.</span>{" "}
+            Hook overlay, title, and caption style are showing on the preview but{" "}
+            <span className="font-semibold">not yet saved.</span> Click Save to commit, or Discard to revert.
+          </div>
+          <button
+            onClick={handleDiscardPreview}
+            className="px-3 py-1.5 border border-surface-500 text-surface-200 hover:text-white hover:border-white text-xs rounded-lg font-medium transition-colors"
+          >
+            Discard
+          </button>
+          <button
+            onClick={handleSavePreview}
+            className="px-4 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs rounded-lg font-semibold transition-colors"
+          >
+            Save changes
+          </button>
+        </div>
+      )}
+
+      {/* Viral Remix apply confirmation — proves the apply actually changed
+          the clip, with the concrete diff right there. */}
+      {remixApplied && (remixApplied.overlay || remixApplied.title || remixApplied.style) && (
+        <div className="shrink-0 px-4 py-2 bg-green-900/30 border-t border-green-800/50 flex items-start gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+          <div className="flex-1 text-xs text-green-200 leading-relaxed">
+            <span className="font-semibold">Remix applied to your clip:</span>{" "}
+            {remixApplied.overlay && (
+              <>hook overlay "<span className="font-mono">{remixApplied.overlay}</span>" burned onto the first {layout.overlayDuration}s · </>
+            )}
+            {remixApplied.title && <>title set to "<span className="italic">{remixApplied.title}</span>" · </>}
+            {remixApplied.style && <>caption style: <span className="font-medium capitalize">{remixApplied.style.replace("-", " ")}</span></>}
+          </div>
+          <button
+            onClick={() => setRemixApplied(null)}
+            className="text-surface-500 hover:text-white text-sm leading-none"
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Persistent music chip — visible whenever a music track is set. */}
+      {layout.musicUrl && !remixApplied && (
+        <div className="shrink-0 px-4 py-1.5 bg-surface-800/80 border-t border-surface-700 flex items-center gap-2 text-[11px]">
+          <span className="text-brand-400 shrink-0">♪</span>
+          <span className="text-surface-400">Music:</span>
+          <span className="text-white truncate flex-1">
+            {layout.musicTitle} <span className="text-surface-500">by {layout.musicArtist}</span>
+          </span>
+          <span className="text-surface-500 text-[10px]">Vol</span>
+          <input
+            type="range" min={0} max={1} step={0.05} value={layout.musicVolume}
+            onChange={(e) => setLayout((prev) => ({ ...prev, musicVolume: parseFloat(e.target.value) }))}
+            className="w-16 accent-brand-500"
+          />
+          <span className="text-surface-400 tabular-nums w-7 text-right">{Math.round(layout.musicVolume * 100)}%</span>
+          <button
+            onClick={() => setLayout((prev) => ({ ...prev, musicUrl: "", musicTitle: "", musicArtist: "" }))}
+            className="text-surface-500 hover:text-red-400 transition-colors"
+            title="Remove music"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Persistent hook-overlay chip — visible whenever an overlay is set,
+          so you know the burned-in text is there even when the playhead has
+          moved past the overlay window. */}
+      {layout.overlayText && !remixApplied && (
+        <div className="shrink-0 px-4 py-1.5 bg-surface-800/80 border-t border-surface-700 flex items-center gap-2 text-[11px]">
+          <Sparkles className="w-3 h-3 text-brand-400 shrink-0" />
+          <span className="text-surface-400">Hook overlay:</span>
+          <span className="text-white font-mono truncate flex-1">{layout.overlayText}</span>
+          <span className="text-surface-500">{layout.overlayDuration}s</span>
+          <button
+            onClick={() => setLayout((prev) => ({ ...prev, overlayText: "" }))}
+            className="text-surface-500 hover:text-red-400 transition-colors"
+            title="Remove overlay"
           >
             ✕
           </button>
