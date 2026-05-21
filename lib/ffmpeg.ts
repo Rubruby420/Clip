@@ -69,8 +69,15 @@ export async function exportClip(opts: ExportOptions): Promise<void> {
     filterComplex = `[0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black[v]`;
   }
 
+  // The FFmpeg `subtitles` filter uses `:` as its option separator, so a
+  // Windows path like `C:/...` gets mis-parsed (FFmpeg reads `C` as the
+  // filename and `/...` as the `original_size` option, which then errors).
+  // Convert backslashes to forward slashes, then escape every colon.
+  const subtitleArg = opts.subtitlePath
+    ? opts.subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:")
+    : "";
   const subtitleFilter = opts.subtitlePath
-    ? `,[v]subtitles='${opts.subtitlePath.replace(/\\/g, "/")}':force_style='Fontname=Impact,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=1,Alignment=2'[v]`
+    ? `,[v]subtitles='${subtitleArg}':force_style='Fontname=Impact,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=1,Alignment=2'[v]`
     : "";
 
   const vMap = subtitleFilter ? "[v]" : "[v]";

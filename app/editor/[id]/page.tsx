@@ -47,6 +47,8 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [exportAspect, setExportAspect] = useState<ExportAspect>("9:16");
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showExportSuccess, setShowExportSuccess] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Edit-mode choice: the user must pick AI auto-cut or manual before editing.
   const [showEditChoice, setShowEditChoice] = useState(true);
@@ -110,6 +112,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   async function handleExport() {
     setExporting(true);
     setShowExportModal(false);
+    setExportError(null);
     try {
       const res = await fetch(`/api/export/${id}`, {
         method: "POST",
@@ -120,11 +123,29 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         }),
       });
       const data = await res.json();
-      if (data.exportUrl) setExportUrl(data.exportUrl);
+      if (!res.ok) {
+        setExportError(data.error || "Export failed. Check the server logs.");
+      } else if (data.exportUrl) {
+        setExportUrl(data.exportUrl);
+        setShowExportSuccess(true);
+      } else {
+        setExportError("Export finished but no file URL was returned.");
+      }
     } catch (err) {
-      alert("Export failed: " + err);
+      setExportError(String(err));
     }
     setExporting(false);
+  }
+
+  // Same-origin route that 302s to a presigned R2 URL with
+  // Content-Disposition: attachment, so the browser saves the file directly.
+  function handleDownload() {
+    const a = document.createElement("a");
+    a.href = `/api/export/${id}/download`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   // Let AI pick the best part of the clip, then apply it (auto-saved like
@@ -201,13 +222,12 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             AI Cut
           </button>
           {exportUrl && (
-            <a
-              href={exportUrl}
-              download
+            <button
+              onClick={handleDownload}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white text-xs rounded-lg font-medium transition-colors"
             >
               <Download className="w-3.5 h-3.5" /> Download
-            </a>
+            </button>
           )}
           <button
             onClick={() => setShowExportModal(true)}
@@ -421,6 +441,49 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
                 Render & Export
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export success — prominent download CTA so the user can't miss it */}
+      {showExportSuccess && exportUrl && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-800 border border-green-700/60 rounded-2xl p-6 w-full max-w-sm text-center">
+            <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-green-700/30 border border-green-600 flex items-center justify-center">
+              <Download className="w-7 h-7 text-green-400" />
+            </div>
+            <h2 className="text-white font-bold text-lg mb-1">Your clip is ready</h2>
+            <p className="text-surface-400 text-sm mb-5">
+              Rendered with captions burned in. Save it to your device below.
+            </p>
+            <button
+              onClick={handleDownload}
+              className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 mb-2"
+            >
+              <Download className="w-4 h-4" /> Download to my device
+            </button>
+            <button
+              onClick={() => setShowExportSuccess(false)}
+              className="w-full py-2 text-surface-500 hover:text-white text-xs transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Export error */}
+      {exportError && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-800 border border-red-700/60 rounded-2xl p-6 w-full max-w-sm">
+            <h2 className="text-white font-bold text-lg mb-1">Export failed</h2>
+            <p className="text-surface-400 text-sm mb-4 break-words">{exportError}</p>
+            <button
+              onClick={() => setExportError(null)}
+              className="w-full py-2.5 bg-surface-700 hover:bg-surface-600 text-white rounded-xl text-sm transition-colors"
+            >
+              Dismiss
+            </button>
           </div>
         </div>
       )}

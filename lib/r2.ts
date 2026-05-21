@@ -21,6 +21,11 @@ const R2 = new S3Client({
   // browser uploads via presigned URLs (CORS / signature mismatch).
   requestChecksumCalculation: "WHEN_REQUIRED",
   responseChecksumValidation: "WHEN_REQUIRED",
+  // R2 only guarantees DNS for `<account>.r2.cloudflarestorage.com`. The
+  // SDK's default virtual-hosted style (`<bucket>.<account>...`) can resolve
+  // in some browsers but fails server-side with ENOTFOUND, which broke the
+  // export route's source-video download.
+  forcePathStyle: true,
 });
 
 const BUCKET = process.env.CLOUDFLARE_R2_BUCKET_NAME!;
@@ -89,6 +94,22 @@ export async function getDownloadPresignedUrl(key: string): Promise<string> {
   return getSignedUrl(R2, new GetObjectCommand({ Bucket: BUCKET, Key: key }), {
     expiresIn: 3600,
   });
+}
+
+// Presigned URL that makes R2 send the object with Content-Disposition:
+// attachment, so the browser saves the file to disk instead of streaming it
+// inline. Used by the editor's Download button — `<a download>` is ignored
+// cross-origin, but this header is honoured everywhere.
+export async function getAttachmentDownloadUrl(key: string, filename: string): Promise<string> {
+  return getSignedUrl(
+    R2,
+    new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      ResponseContentDisposition: `attachment; filename="${filename}"`,
+    }),
+    { expiresIn: 3600 }
+  );
 }
 
 export function getPublicUrl(key: string): string {

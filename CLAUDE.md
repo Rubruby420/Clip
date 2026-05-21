@@ -97,6 +97,22 @@ Other commands: `npm run build`, `npm run db:studio`.
 - **R2 client needs `requestChecksumCalculation: "WHEN_REQUIRED"`** (set in `lib/r2.ts`).
   Without it, the AWS SDK v3 adds `x-amz-checksum-*` headers that break browser uploads
   via presigned URLs (signature / CORS mismatch).
+- **R2 client must use `forcePathStyle: true`** (set in `lib/r2.ts`). R2 only
+  guarantees DNS for `<account>.r2.cloudflarestorage.com`; the AWS SDK's default
+  virtual-hosted style produces `<bucket>.<account>.r2.cloudflarestorage.com`,
+  which can resolve in browsers (Chrome DoH / cached) but fails server-side in
+  Node with `getaddrinfo ENOTFOUND`. This broke the export route's source-video
+  download — every server-to-R2 request needs path-style addressing.
+- **Subtitle paths must escape `:` for FFmpeg's `subtitles` filter** (handled in
+  `lib/ffmpeg.ts`). The filter uses `:` as its option separator, so a Windows
+  path like `C:/Users/...` gets mis-parsed (FFmpeg reads `C` as the file and
+  `/...` as the `original_size` option). Replace `\` with `/` then escape every
+  `:` as `\:`.
+- **Export download uses a same-origin proxy route + R2's
+  `ResponseContentDisposition`.** A naive `<a href="<r2-url>" download>` is
+  silently ignored by browsers for cross-origin URLs (clicking just plays the
+  video). `/api/export/[id]/download` 302s to a presigned R2 URL with
+  `Content-Disposition: attachment` baked in, which forces a save-to-disk.
 - **R2 bucket CORS must allow `PUT` and expose the `ETag` header.** Multipart completion
   needs the ETag from each part-upload response. The bucket's CORS policy lists
   `AllowedMethods: [GET,PUT,HEAD,POST]`, `AllowedHeaders: ["*"]`, `ExposeHeaders: ["ETag"]`,
