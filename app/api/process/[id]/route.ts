@@ -6,6 +6,7 @@ import { detectHighlights, type Highlight } from "@/lib/assemblyai";
 import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
 import { evaluateClip } from "@/lib/coach";
 import { extractAudio, extractThumbnail, generatePreviewProxy, tmpPath } from "@/lib/ffmpeg";
+import { generatePeaks } from "@/lib/waveform";
 import fs from "fs";
 import https from "https";
 import http from "http";
@@ -29,8 +30,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Smart Import settings (from the upload page). Off unless explicitly enabled.
+  // Upload-page settings.
   const body = await req.json().catch(() => ({}));
+  // Auto-detect viral clips — off by default. When off we still run
+  // transcription so the source editor has words for captions, but we
+  // skip the AssemblyAI/LLM highlight pass and don't pre-create clips.
+  const autoDetect = body.autoDetect === true;
   const smartImport = body.smartImport === true;
   const minLen = Math.max(10, Math.min(90, Number(body.minLen) || 15));
   const maxLen = Math.max(minLen, Math.min(90, Number(body.maxLen) || 60));
@@ -50,6 +55,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // 2. Extract audio
       await extractAudio(videoPath, audioPath);
+
+      // 2a. Generate the audio waveform peaks for the new editor's
+      //     timeline. Non-fatal — the editor falls back to a flat bar if
+      //     this is missing and offers a button to regenerate later.
+      try {
+        const peaks = await generatePeaks(audioPath);
+        if (peaks.length > 0) {
+          await db.project.update({
+            where: { id },
+            data: { waveform: JSON.stringify(peaks) },
+          });
+        }
+      } catch (err) {
+        console.error("Waveform generation failed (non-fatal):", err);
+      }
 
       // 2b. Generate a 720p proxy mp4 for smooth editor playback (4K sources
       //     stutter when decoded for the small preview). Failure here is
@@ -72,8 +92,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // 3. Transcribe with Whisper
       const transcription = await transcribeAudio(audioPath);
 
-      // 4. Detect highlights — AssemblyAI chapters first, then LLM transcript
-      //    analysis as a fallback so clips always get real, specific titles.
+      // 4. Store transcription (always — the source editor and any
+      //    later AI features rely on the full word list).
+      await db.project.update({
+        where: { id },
+        data: {
+          transcription: JSON.stringify(transcription),
+          duration: transcription.duration,
+        },
+      });
+
+      // 5. Auto-detect viral clips — opt-in from the upload page. When
+      //    off, processing finishes here with zero clips and the user
+      //    authors them by hand from the source editor.
+      if (!autoDetect) {
+        await db.project.update({ where: { id }, data: { status: "ready" } });
+        return;
+      }
+
+      // Detect highlights — AssemblyAI chapters first, then LLM transcript
+      // analysis as a fallback so clips always get real, specific titles.
       let highlights: Highlight[] = [];
       try {
         highlights = await detectHighlights(downloadUrl);
@@ -103,15 +141,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           });
         }
       }
-
-      // 5. Store transcription
-      await db.project.update({
-        where: { id },
-        data: {
-          transcription: JSON.stringify(transcription),
-          duration: transcription.duration,
-        },
-      });
 
       // 6. Create clip records + thumbnails
       for (const h of highlights.slice(0, 12)) {

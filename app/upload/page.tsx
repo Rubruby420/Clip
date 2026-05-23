@@ -54,7 +54,12 @@ export default function UploadPage() {
   const [autoProcess, setAutoProcess] = useState(true);
   const [statusText, setStatusText] = useState("");
 
-  // Smart Import — AI keeps the best part of each clip, trims the rest.
+  // Auto-detect viral clips — when off, processing still runs (audio,
+  // proxy, waveform, transcript) but no clips are pre-created; the user
+  // authors them by hand from the source editor.
+  const [autoDetect, setAutoDetect] = useState(false);
+  // Smart Import — AI keeps the best part of each detected clip. Only
+  // relevant when autoDetect is on.
   const [smartImport, setSmartImport] = useState(true);
   const [minLen, setMinLen] = useState(15);
   const [maxLen, setMaxLen] = useState(60);
@@ -140,7 +145,7 @@ export default function UploadPage() {
         await fetch(`/api/process/${projectId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ smartImport, minLen, maxLen }),
+          body: JSON.stringify({ autoDetect, smartImport, minLen, maxLen }),
         });
       }
 
@@ -289,44 +294,61 @@ export default function UploadPage() {
                   <div className="p-4 bg-surface-800 rounded-xl border border-surface-600 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-white text-sm font-medium">Smart Import — auto-trim clips</p>
-                        <p className="text-surface-500 text-xs mt-0.5">AI keeps the best part of each clip and trims the rest</p>
+                        <p className="text-white text-sm font-medium">Auto-detect viral clips</p>
+                        <p className="text-surface-500 text-xs mt-0.5">Off by default — author clips by hand in the source editor</p>
                       </div>
                       <button
-                        onClick={() => setSmartImport(!smartImport)}
-                        className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${smartImport ? "bg-brand-600" : "bg-surface-600"}`}
+                        onClick={() => setAutoDetect(!autoDetect)}
+                        className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${autoDetect ? "bg-brand-600" : "bg-surface-600"}`}
                       >
-                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${smartImport ? "left-6" : "left-1"}`} />
+                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${autoDetect ? "left-6" : "left-1"}`} />
                       </button>
                     </div>
 
-                    {smartImport && (
-                      <div className="pt-1 space-y-2.5 border-t border-surface-700">
-                        <div className="flex justify-between text-xs pt-2.5">
-                          <span className="text-surface-400">Clip length range</span>
-                          <span className="text-brand-300 font-medium tabular-nums">{minLen}s – {maxLen}s</span>
+                    {autoDetect && (
+                      <div className="pt-3 space-y-3 border-t border-surface-700">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-white text-sm font-medium">Smart Import — auto-trim clips</p>
+                            <p className="text-surface-500 text-xs mt-0.5">AI keeps the best part of each detected clip</p>
+                          </div>
+                          <button
+                            onClick={() => setSmartImport(!smartImport)}
+                            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${smartImport ? "bg-brand-600" : "bg-surface-600"}`}
+                          >
+                            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${smartImport ? "left-6" : "left-1"}`} />
+                          </button>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-surface-500 w-7">Min</span>
-                          <input
-                            type="range" min={10} max={90} step={5} value={minLen}
-                            onChange={(e) => setMinLen(Math.min(parseInt(e.target.value), maxLen))}
-                            className="flex-1 accent-brand-500"
-                          />
-                          <span className="text-[10px] text-white w-8 text-right tabular-nums">{minLen}s</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-surface-500 w-7">Max</span>
-                          <input
-                            type="range" min={10} max={90} step={5} value={maxLen}
-                            onChange={(e) => setMaxLen(Math.max(parseInt(e.target.value), minLen))}
-                            className="flex-1 accent-brand-500"
-                          />
-                          <span className="text-[10px] text-white w-8 text-right tabular-nums">{maxLen}s</span>
-                        </div>
-                        <p className="text-[10px] text-surface-600">
-                          AI picks the best length for each clip within this range.
-                        </p>
+
+                        {smartImport && (
+                          <div className="pt-1 space-y-2.5 border-t border-surface-700">
+                            <div className="flex justify-between text-xs pt-2.5">
+                              <span className="text-surface-400">Clip length range</span>
+                              <span className="text-brand-300 font-medium tabular-nums">{minLen}s – {maxLen}s</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-surface-500 w-7">Min</span>
+                              <input
+                                type="range" min={10} max={90} step={5} value={minLen}
+                                onChange={(e) => setMinLen(Math.min(parseInt(e.target.value), maxLen))}
+                                className="flex-1 accent-brand-500"
+                              />
+                              <span className="text-[10px] text-white w-8 text-right tabular-nums">{minLen}s</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-surface-500 w-7">Max</span>
+                              <input
+                                type="range" min={10} max={90} step={5} value={maxLen}
+                                onChange={(e) => setMaxLen(Math.max(parseInt(e.target.value), minLen))}
+                                className="flex-1 accent-brand-500"
+                              />
+                              <span className="text-[10px] text-white w-8 text-right tabular-nums">{maxLen}s</span>
+                            </div>
+                            <p className="text-[10px] text-surface-600">
+                              AI picks the best length for each clip within this range.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -337,7 +359,7 @@ export default function UploadPage() {
                   className="w-full bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-700 hover:to-brand-600 text-white py-4 rounded-xl font-bold text-base transition-all duration-200 flex items-center justify-center gap-2.5 shadow-lg shadow-brand-900/40"
                 >
                   <Zap className="w-5 h-5" />
-                  {autoProcess ? "Upload & Find Viral Clips" : "Upload Video"}
+                  {autoDetect ? "Upload & Find Viral Clips" : "Upload Video"}
                 </button>
               </div>
             )}

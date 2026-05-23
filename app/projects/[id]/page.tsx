@@ -3,7 +3,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 
 interface Clip {
@@ -113,9 +113,18 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   {formatDuration(project.duration)} total
                 </span>
               )}
-              <span className="text-surface-500">{project.clips.length} clips detected</span>
+              <span className="text-surface-500">{project.clips.length} clip{project.clips.length === 1 ? "" : "s"}</span>
             </div>
           </div>
+          {project.status === "ready" && (
+            <Link
+              href={`/source/${project.id}`}
+              className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
+              title="Open the source editor and author clips by hand"
+            >
+              <Scissors className="w-4 h-4" /> Edit source
+            </Link>
+          )}
         </div>
 
         {/* Processing state */}
@@ -184,6 +193,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                         >
                           <Edit3 className="w-3.5 h-3.5" /> Edit Clip
                         </Link>
+                        <Link
+                          href={`/edit/${clip.id}`}
+                          className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-brand-300 border border-brand-700 hover:bg-brand-900/40 rounded px-1.5 py-2 transition-colors"
+                          title="Open in the new editor (beta)"
+                        >
+                          beta
+                        </Link>
                         {clip.exportUrl && (
                           <a
                             href={clip.exportUrl}
@@ -203,9 +219,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         )}
 
         {project.status === "ready" && project.clips.length === 0 && (
-          <div className="text-center py-16 text-surface-500">
-            <Film className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>No clips were detected. The video may be too short or silent.</p>
+          <div className="text-center py-16 text-surface-500 max-w-md mx-auto">
+            <Scissors className="w-12 h-12 mx-auto mb-3 opacity-50" />
+            <p className="text-white font-medium mb-1">No clips yet</p>
+            <p className="text-sm mb-5">
+              This source has been transcribed and is ready to cut. Open the source editor,
+              drag the waveform handles to scope a clip, and save.
+            </p>
+            <Link
+              href={`/source/${project.id}`}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
+            >
+              <Scissors className="w-4 h-4" /> Open source editor
+            </Link>
           </div>
         )}
       </main>
