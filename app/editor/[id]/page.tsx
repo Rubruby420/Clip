@@ -4,13 +4,13 @@ import { useEffect, useState, use, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
-  Film, Type, Layout, Sparkles, Scissors, BookOpen, Gauge,
+  Film, Type, Layout, Sparkles, BookOpen, Gauge,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import Timeline from "@/components/editor/Timeline";
 import LayoutPanel, { type LayoutConfig, DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
+import ViralTipsPanel from "@/components/editor/ViralTipsPanel";
 import CaptionPanel from "@/components/editor/CaptionPanel";
-import RemixPanel from "@/components/editor/RemixPanel";
 import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
@@ -32,6 +32,8 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading] = useState(true);
 
   const [videoSrc, setVideoSrc] = useState("");
+  const [hasProxy, setHasProxy] = useState(false);
+  const [generatingProxy, setGeneratingProxy] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [startTime, setStartTime] = useState(0);
@@ -50,8 +52,6 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [showExportSuccess, setShowExportSuccess] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  // Edit-mode choice: the user must pick AI auto-cut or manual before editing.
-  const [showEditChoice, setShowEditChoice] = useState(true);
   const [aiCutting, setAiCutting] = useState(false);
   const [aiCutReason, setAiCutReason] = useState<string | null>(null);
   const [remixApplied, setRemixApplied] = useState<{
@@ -68,7 +68,6 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     captionsEnabled: boolean;
     title: string;
   } | null>(null);
-
   // Load clip + project video
   useEffect(() => {
     (async () => {
@@ -78,6 +77,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       setClip(c);
       setStartTime(c.startTime);
       setEndTime(c.endTime);
+      setCurrentTime(c.startTime);
       setWords(JSON.parse(c.words || "[]"));
       if (c.layoutConfig) {
         try { setLayout({ ...DEFAULT_LAYOUT, ...JSON.parse(c.layoutConfig) }); } catch {}
@@ -87,11 +87,14 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       }
       if (c.exportUrl) setExportUrl(c.exportUrl);
 
-      // Get project to get video URL
+      // Get project to get video URL. Prefer the 720p proxy when ready —
+      // it keeps the editor preview smooth on 4K sources. The export route
+      // still reads the original from R2 so finals stay full-res.
       const projRes = await fetch(`/api/projects/${c.projectId}`);
       if (projRes.ok) {
         const { project } = await projRes.json();
-        setVideoSrc(project.originalUrl);
+        setVideoSrc(project.proxyUrl || project.originalUrl);
+        setHasProxy(Boolean(project.proxyUrl));
       }
       setLoading(false);
     })();
@@ -120,11 +123,12 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         endTime,
         layoutConfig: JSON.stringify(layout),
         captionStyle: captionConfig.style,
+        title: clip.title,
       });
     }, 800);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startTime, endTime, layout, captionConfig.style, previewMode]);
+  }, [startTime, endTime, layout, captionConfig.style, clip?.title, previewMode]);
 
   async function handleSavePreview() {
     if (!clip) return;
@@ -209,8 +213,8 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       if (res.ok) {
         setStartTime(data.startTime);
         setEndTime(data.endTime);
+        setCurrentTime(data.startTime);
         setAiCutReason(data.reason || "AI trimmed this clip to its best moment.");
-        setShowEditChoice(false);
       } else {
         alert(data.error || "AI auto-cut failed");
       }
@@ -218,6 +222,26 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       alert("AI auto-cut failed — check your connection and try again.");
     }
     setAiCutting(false);
+  }
+
+  // Generate the 720p preview proxy for an older project on demand. New
+  // uploads get one automatically during the process pipeline.
+  async function handleGenerateProxy() {
+    if (!clip) return;
+    setGeneratingProxy(true);
+    try {
+      const res = await fetch(`/api/projects/${clip.projectId}/proxy`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.project?.proxyUrl) {
+        setVideoSrc(data.project.proxyUrl);
+        setHasProxy(true);
+      } else {
+        alert(data.error || "Couldn't generate the preview. Falling back to the original.");
+      }
+    } catch {
+      alert("Couldn't generate the preview — check your connection.");
+    }
+    setGeneratingProxy(false);
   }
 
   if (loading) {
@@ -263,6 +287,17 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         <span className="text-white text-sm font-medium truncate max-w-[200px]">{clip.title}</span>
 
         <div className="ml-auto flex items-center gap-2">
+          {!hasProxy && clip && (
+            <button
+              onClick={handleGenerateProxy}
+              disabled={generatingProxy}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-yellow-600 text-yellow-300 hover:bg-yellow-900/30 disabled:opacity-50 text-xs rounded-lg font-medium transition-colors"
+              title="Generate a 720p preview for smoother playback (export still uses the original full-res video)"
+            >
+              {generatingProxy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+              {generatingProxy ? "Generating preview…" : "Smoother preview"}
+            </button>
+          )}
           <button
             onClick={handleAiCut}
             disabled={aiCutting}
@@ -323,87 +358,18 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               onEnabledChange={setCaptionsEnabled}
             />
           )}
-          {activeTab === "viral" && (
-            <RemixPanel
-              clipId={clip.id}
-              previewActive={previewMode}
-              onPreview={async (rec) => {
-                // Snapshot the current state so Discard can restore it.
-                setPreviewSnapshot({
-                  layout: { ...layout },
-                  captionStyle: captionConfig.style,
-                  captionsEnabled,
-                  title: clip?.title ?? "",
-                });
-
-                // Kick off the music pick in the background — don't block the
-                // visual preview on it. The track loads in moments later.
-                if (rec.musicVibe && clip) {
-                  fetch(`/api/clips/${clip.id}/music`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ vibe: rec.musicVibe }),
-                  })
-                    .then((r) => (r.ok ? r.json() : null))
-                    .then((data) => {
-                      if (data?.track) {
-                        setLayout((prev) => ({
-                          ...prev,
-                          musicUrl: data.track.url,
-                          musicTitle: data.track.title,
-                          musicArtist: data.track.artist,
-                        }));
-                      }
-                    })
-                    .catch(() => null);
-                }
-
-                // Translate the AI's editBeats into actual on-canvas overlays
-                // anchored to clip-local timestamps. "0-2s" → start 0, end 2.
-                const clipLen = endTime - startTime;
-                const positions: Array<"top" | "center" | "bottom"> = ["top", "center", "bottom"];
-                const beatOverlays = (rec.editBeats || [])
-                  .map((b, i) => {
-                    const m = b.timeRange?.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
-                    if (!m) return null;
-                    const start = Math.max(0, Math.min(clipLen, parseFloat(m[1])));
-                    const end = Math.max(start + 0.5, Math.min(clipLen, parseFloat(m[2])));
-                    if (!b.overlay && !b.emoji) return null;
-                    return {
-                      text: (b.overlay || "").toUpperCase(),
-                      emoji: b.emoji || "",
-                      start,
-                      end,
-                      position: positions[i % positions.length],
-                    };
-                  })
-                  .filter(Boolean) as typeof DEFAULT_LAYOUT.beatOverlays;
-
-                const overlay = (rec.hookText || rec.hook || "").trim();
-                setLayout((prev) => ({
-                  ...prev,
-                  overlayText: overlay || prev.overlayText,
-                  beatOverlays,
-                }));
-                setCaptionConfig((prev) => ({ ...prev, style: rec.captionStyle }));
-                setCaptionsEnabled(true);
-                if (rec.suggestedTitle?.trim()) {
-                  setClip((prev) => (prev ? { ...prev, title: rec.suggestedTitle.trim() } : prev));
-                }
-                setPreviewMode(true);
-              }}
-            />
-          )}
           {activeTab === "story" && (
             <StoryPanel
               clipId={clip.id}
               onApplyRecut={(start, end, reason) => {
                 setStartTime(start);
                 setEndTime(end);
+                setCurrentTime(start);
                 setAiCutReason(reason);
               }}
             />
           )}
+          {activeTab === "viral" && <ViralTipsPanel clipId={clip.id} />}
           {activeTab === "coach" && <CoachPanel clipId={clip.id} />}
         </aside>
 
@@ -503,16 +469,33 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       {/* Persistent music chip — visible whenever a music track is set. */}
       {layout.musicUrl && !remixApplied && (
         <div className="shrink-0 px-4 py-1.5 bg-surface-800/80 border-t border-surface-700 flex items-center gap-2 text-[11px]">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={layout.musicEnabled !== false}
+            onClick={() => setLayout((prev) => ({ ...prev, musicEnabled: prev.musicEnabled === false }))}
+            className={`relative w-8 h-4 rounded-full transition-colors shrink-0 ${
+              layout.musicEnabled !== false ? "bg-brand-500" : "bg-surface-600"
+            }`}
+            title={layout.musicEnabled !== false ? "Music on" : "Music off"}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${
+                layout.musicEnabled !== false ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
           <span className="text-brand-400 shrink-0">♪</span>
           <span className="text-surface-400">Music:</span>
-          <span className="text-white truncate flex-1">
+          <span className={`truncate flex-1 ${layout.musicEnabled !== false ? "text-white" : "text-surface-500"}`}>
             {layout.musicTitle} <span className="text-surface-500">by {layout.musicArtist}</span>
           </span>
           <span className="text-surface-500 text-[10px]">Vol</span>
           <input
             type="range" min={0} max={1} step={0.05} value={layout.musicVolume}
+            disabled={layout.musicEnabled === false}
             onChange={(e) => setLayout((prev) => ({ ...prev, musicVolume: parseFloat(e.target.value) }))}
-            className="w-16 accent-brand-500"
+            className="w-16 accent-brand-500 disabled:opacity-40"
           />
           <span className="text-surface-400 tabular-nums w-7 text-right">{Math.round(layout.musicVolume * 100)}%</span>
           <button
@@ -556,56 +539,6 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             onEndChange={setEndTime}
             onSeek={(t) => setCurrentTime(t)}
           />
-        </div>
-      )}
-
-      {/* Edit-mode choice — blocks editing until the user picks an approach */}
-      {showEditChoice && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md">
-            <h2 className="text-white font-bold text-lg mb-1">Edit this clip</h2>
-            <p className="text-surface-500 text-sm mb-5">
-              Choose how to start. You can always fine-tune the trim by hand afterwards.
-            </p>
-            <div className="space-y-3">
-              <button
-                onClick={handleAiCut}
-                disabled={aiCutting}
-                className="w-full flex items-start gap-3 p-4 rounded-xl border border-brand-600 bg-brand-900/30 hover:bg-brand-900/50 disabled:opacity-60 text-left transition-colors"
-              >
-                <div className="w-9 h-9 rounded-lg bg-brand-600 flex items-center justify-center shrink-0">
-                  {aiCutting ? (
-                    <Loader2 className="w-5 h-5 text-white animate-spin" />
-                  ) : (
-                    <Sparkles className="w-5 h-5 text-white" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-white font-semibold text-sm">
-                    {aiCutting ? "AI is choosing the best part…" : "AI Auto-Cut"}
-                  </p>
-                  <p className="text-surface-400 text-xs mt-0.5">
-                    Let AI trim straight to the punchiest, most viral moment of the clip.
-                  </p>
-                </div>
-              </button>
-              <button
-                onClick={() => setShowEditChoice(false)}
-                disabled={aiCutting}
-                className="w-full flex items-start gap-3 p-4 rounded-xl border border-surface-600 hover:border-surface-500 disabled:opacity-60 text-left transition-colors"
-              >
-                <div className="w-9 h-9 rounded-lg bg-surface-700 flex items-center justify-center shrink-0">
-                  <Scissors className="w-5 h-5 text-surface-300" />
-                </div>
-                <div>
-                  <p className="text-white font-semibold text-sm">Edit Manually</p>
-                  <p className="text-surface-400 text-xs mt-0.5">
-                    Trim and adjust everything yourself with the timeline.
-                  </p>
-                </div>
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

@@ -29,6 +29,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
 
   // Delete R2 objects
   if (project.originalKey) await deleteObject(project.originalKey).catch(() => null);
+  if (project.proxyKey) await deleteObject(project.proxyKey).catch(() => null);
   for (const clip of project.clips) {
     if (clip.exportKey) await deleteObject(clip.exportKey).catch(() => null);
   }

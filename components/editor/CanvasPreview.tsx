@@ -87,18 +87,20 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   const musicRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Sync background video with main video
+  // Background-blur uses a single frozen frame from the clip's start, not a
+  // parallel video decode — running two 4K streams in lockstep crushes
+  // playback. Seek the bg <video> to startTime once metadata loads (and
+  // whenever the trim moves), then leave it paused.
   useEffect(() => {
-    const main = mainVideoRef.current;
     const bg = bgVideoRef.current;
-    if (!main || !bg) return;
-    const sync = () => { if (Math.abs(bg.currentTime - main.currentTime) > 0.2) bg.currentTime = main.currentTime; };
-    main.addEventListener("timeupdate", sync);
-    main.addEventListener("seeked", sync);
-    main.addEventListener("play", () => bg.play().catch(() => null));
-    main.addEventListener("pause", () => bg.pause());
-    return () => main.removeEventListener("timeupdate", sync);
-  }, []);
+    if (!bg) return;
+    const snap = () => {
+      try { bg.currentTime = startTime; bg.pause(); } catch {}
+    };
+    if (bg.readyState >= 1) snap();
+    else bg.addEventListener("loadedmetadata", snap, { once: true });
+    return () => bg.removeEventListener("loadedmetadata", snap);
+  }, [startTime, videoSrc]);
 
   // Mirror the <video> element's play/pause state into React so the custom
   // play button reflects reality (the video can pause itself on end / errors).
@@ -139,7 +141,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
       v.removeEventListener("pause", onPause);
       v.removeEventListener("seeked", onSeek);
     };
-  }, [layout.musicUrl, layout.musicVolume, startTime]);
+  }, [layout.musicUrl, layout.musicVolume, layout.musicEnabled, startTime]);
 
   // Snap playback into the trimmed range whenever the trim changes (e.g.
   // after AI Auto-Cut or manual slider drag).
@@ -214,10 +216,11 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
           ref={bgVideoRef}
           src={videoSrc}
           className="absolute inset-0 w-full h-full object-cover scale-110"
-          style={{ filter: `blur(${layout.blurAmount}px)` }}
+          style={{ filter: `blur(${layout.blurAmount}px)`, willChange: "transform" }}
           muted
           playsInline
           preload="metadata"
+          disablePictureInPicture
         />
       ) : (
         <div className="absolute inset-0" style={bgStyle()} />
@@ -230,8 +233,10 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         ref={mainVideoRef}
         src={videoSrc}
         className="absolute inset-0 w-full h-full object-contain z-10 cursor-pointer"
+        style={{ willChange: "transform" }}
         playsInline
         preload="metadata"
+        disablePictureInPicture
         onClick={togglePlay}
         onTimeUpdate={(e) => {
           const t = e.currentTarget.currentTime;
@@ -247,7 +252,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
       />
 
       {/* Background music — synced to the video via play/pause/seek effects. */}
-      {layout.musicUrl && (
+      {layout.musicUrl && layout.musicEnabled !== false && (
         <audio ref={musicRef} src={layout.musicUrl} preload="auto" />
       )}
 
@@ -260,7 +265,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
       {/* Hook text overlay — burned-in big text for the first N seconds.
           Driven by layout.overlayText / layout.overlayDuration; set by AI
           Remix's "Apply to my clip" or edited by hand in Layout panel. */}
-      {layout.overlayText && currentTime >= 0 && currentTime <= layout.overlayDuration && (
+      {layout.overlayEnabled !== false && layout.overlayText && currentTime >= 0 && currentTime <= layout.overlayDuration && (
         <div className="absolute inset-0 z-20 flex items-start justify-center pt-[18%] px-4 pointer-events-none">
           <p
             className="text-center font-black uppercase leading-tight"
@@ -281,7 +286,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
 
       {/* Beat overlays — pop in at each editBeat's timestamp. Mix of small
           uppercase text and a big emoji "stamp" for that beat. */}
-      {layout.beatOverlays?.map((b, i) => {
+      {layout.beatOverlaysEnabled !== false && layout.beatOverlays?.map((b, i) => {
         const visible = currentTime >= b.start && currentTime <= b.end;
         if (!visible) return null;
         const posClass =

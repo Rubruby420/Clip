@@ -24,11 +24,14 @@ export interface LayoutConfig {
   bgImageUrl: string;
   blurAmount: number;
   // Opening hook overlay (first overlayDuration seconds).
+  overlayEnabled: boolean;
   overlayText: string;
   overlayDuration: number;
   // Beat-by-beat overlays from the AI clone recipe.
+  beatOverlaysEnabled: boolean;
   beatOverlays: BeatOverlay[];
   // Background music (Jamendo). Auto-picked by AI Remix or set by hand.
+  musicEnabled: boolean;
   musicUrl: string;
   musicTitle: string;
   musicArtist: string;
@@ -43,9 +46,12 @@ export const DEFAULT_LAYOUT: LayoutConfig = {
   gradientTo: "#ec4899",
   bgImageUrl: "",
   blurAmount: 20,
+  overlayEnabled: true,
   overlayText: "",
   overlayDuration: 3,
+  beatOverlaysEnabled: true,
   beatOverlays: [],
+  musicEnabled: true,
   musicUrl: "",
   musicTitle: "",
   musicArtist: "",
@@ -77,20 +83,40 @@ export default function LayoutPanel({ config, onChange }: Props) {
   return (
     <div className="p-4 space-y-5">
       <div>
-        <p className="text-xs text-surface-500 uppercase tracking-wider mb-2">Hook overlay</p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-surface-500 uppercase tracking-wider">Hook overlay</p>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={config.overlayEnabled}
+            onClick={() => update({ overlayEnabled: !config.overlayEnabled })}
+            className={`relative w-9 h-5 rounded-full transition-colors ${
+              config.overlayEnabled ? "bg-brand-500" : "bg-surface-600"
+            }`}
+            title={config.overlayEnabled ? "Hook overlay on" : "Hook overlay off"}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                config.overlayEnabled ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
         <input
           type="text"
           value={config.overlayText}
           onChange={(e) => update({ overlayText: e.target.value })}
           placeholder="Big bold text at the start (e.g. WAIT FOR IT…)"
           maxLength={80}
-          className="w-full px-2.5 py-2 bg-surface-700 border border-surface-600 rounded-lg text-xs text-white placeholder-surface-500 focus:border-brand-500 focus:outline-none"
+          disabled={!config.overlayEnabled}
+          className="w-full px-2.5 py-2 bg-surface-700 border border-surface-600 rounded-lg text-xs text-white placeholder-surface-500 focus:border-brand-500 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         />
-        <div className="flex items-center gap-3 mt-2">
+        <div className={`flex items-center gap-3 mt-2 ${config.overlayEnabled ? "" : "opacity-40"}`}>
           <span className="text-[10px] text-surface-500">Shows for</span>
           <input
             type="range" min={1} max={8} step={0.5} value={config.overlayDuration}
             onChange={(e) => update({ overlayDuration: parseFloat(e.target.value) })}
+            disabled={!config.overlayEnabled}
             className="flex-1 accent-brand-500"
           />
           <span className="text-[10px] text-white tabular-nums">{config.overlayDuration}s</span>

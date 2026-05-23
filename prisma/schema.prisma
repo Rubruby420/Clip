@@ -12,6 +12,8 @@ model Project {
   title         String
   originalUrl   String
   originalKey   String
+  proxyUrl      String?
+  proxyKey      String?
   duration      Float?
   status        String   @default("uploading")
   transcription String?

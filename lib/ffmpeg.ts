@@ -19,6 +19,19 @@ export async function extractAudio(videoPath: string, outputPath: string): Promi
   await execAsync(`"${bin}" -y -i "${videoPath}" -vn -ar 16000 -ac 1 -b:a 64k "${outputPath}"`);
 }
 
+// 720p H.264 mp4 used by the editor preview so 4K sources don't crush
+// playback. Export reads the original instead, so final quality is
+// untouched. veryfast/crf 26 keeps the encode time tolerable for long
+// 4K sources; faststart lets the browser stream before the file is fully
+// downloaded.
+export async function generatePreviewProxy(videoPath: string, outputPath: string): Promise<void> {
+  const bin = ffmpegBin();
+  await execAsync(
+    `"${bin}" -y -i "${videoPath}" -vf "scale=-2:720" -c:v libx264 -preset veryfast -crf 26 -c:a aac -b:a 128k -movflags +faststart "${outputPath}"`,
+    { maxBuffer: 1024 * 1024 * 50 }
+  );
+}
+
 export async function extractThumbnail(
   videoPath: string,
   outputPath: string,

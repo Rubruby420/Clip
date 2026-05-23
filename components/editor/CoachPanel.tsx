@@ -4,7 +4,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Gauge, Loader2, AlertCircle, CheckCircle2, RefreshCw, Wand2,
-  ExternalLink, AlertTriangle, Lightbulb,
+  ExternalLink, AlertTriangle, Lightbulb, ChevronDown,
 } from "lucide-react";
 
 interface CoachComment { issue: string; fix: string }
@@ -36,6 +36,7 @@ export default function CoachPanel({ clipId }: Props) {
   const [loading, setLoading] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showRefs, setShowRefs] = useState(true);
 
   const runCheck = useCallback(async () => {
     setLoading(true);
@@ -171,9 +172,17 @@ export default function CoachPanel({ clipId }: Props) {
           {/* Reference videos */}
           {coach && coach.videos.length > 0 && (
             <div>
-              <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-2">
-                Viral references to study ({coach.videos.length})
-              </p>
+              <button
+                onClick={() => setShowRefs((s) => !s)}
+                className="w-full flex items-center justify-between mb-2 text-[10px] text-surface-500 uppercase tracking-wider hover:text-surface-300 transition-colors"
+                aria-expanded={showRefs}
+              >
+                <span>Viral references to study ({coach.videos.length})</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${showRefs ? "" : "-rotate-90"}`}
+                />
+              </button>
+              {showRefs && (
               <div className="space-y-2">
                 {coach.videos.map((v) => (
                   <a
@@ -205,6 +214,7 @@ export default function CoachPanel({ clipId }: Props) {
                   </a>
                 ))}
               </div>
+              )}
             </div>
           )}
 

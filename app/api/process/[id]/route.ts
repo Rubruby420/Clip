@@ -5,7 +5,7 @@ import { transcribeAudio, sliceWords } from "@/lib/whisper";
 import { detectHighlights, type Highlight } from "@/lib/assemblyai";
 import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
 import { evaluateClip } from "@/lib/coach";
-import { extractAudio, extractThumbnail, tmpPath } from "@/lib/ffmpeg";
+import { extractAudio, extractThumbnail, generatePreviewProxy, tmpPath } from "@/lib/ffmpeg";
 import fs from "fs";
 import https from "https";
 import http from "http";
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   (async () => {
     const videoPath = tmpPath(`${id}.mp4`);
     const audioPath = tmpPath(`${id}.mp3`);
+    const proxyPath = tmpPath(`${id}_proxy.mp4`);
 
     try {
       // 1. Download video from R2
@@ -49,6 +50,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // 2. Extract audio
       await extractAudio(videoPath, audioPath);
+
+      // 2b. Generate a 720p proxy mp4 for smooth editor playback (4K sources
+      //     stutter when decoded for the small preview). Failure here is
+      //     non-fatal — the editor falls back to the original URL.
+      try {
+        await generatePreviewProxy(videoPath, proxyPath);
+        if (fs.existsSync(proxyPath)) {
+          const proxyBuffer = fs.readFileSync(proxyPath);
+          const proxyKey = `proxies/${id}.mp4`;
+          const proxyUrl = await uploadBuffer(proxyKey, proxyBuffer, "video/mp4");
+          await db.project.update({
+            where: { id },
+            data: { proxyUrl, proxyKey },
+          });
+        }
+      } catch (err) {
+        console.error("Proxy generation failed (non-fatal):", err);
+      }
 
       // 3. Transcribe with Whisper
       const transcription = await transcribeAudio(audioPath);
@@ -163,7 +182,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       console.error("Processing error:", err);
       await db.project.update({ where: { id }, data: { status: "error" } }).catch(() => null);
     } finally {
-      [videoPath, audioPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+      [videoPath, audioPath, proxyPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
     }
   })();
 

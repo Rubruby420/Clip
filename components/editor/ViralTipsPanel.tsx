@@ -3,10 +3,10 @@
 
 import { useEffect, useState } from "react";
 import {
-  Sparkles, Loader2, TrendingUp, Copy, Check, ExternalLink,
-  Wand2, AlertCircle, RefreshCw, Music2, Film, Plus,
+  Sparkles, Loader2, Copy, Check, ExternalLink,
+  Wand2, AlertCircle, RefreshCw, Film, Plus,
+  ChevronDown, TrendingUp,
 } from "lucide-react";
-import type { CaptionStyle } from "@/lib/captions";
 
 interface ViralVideo {
   videoId: string; url: string; title: string; channelTitle: string;
@@ -18,7 +18,7 @@ interface EditBeat {
 }
 interface CloneRecipe {
   styleSummary: string; hook: string; hookText: string;
-  suggestedTitle: string; captionStyle: CaptionStyle; hashtags: string[];
+  suggestedTitle: string; hashtags: string[];
   musicVibe: string; editBeats: EditBeat[]; predictedScore: number;
   clonedFrom: { videoId: string; title: string }[];
 }
@@ -27,11 +27,7 @@ interface Remix {
   recipe: CloneRecipe | null; pickedIds?: string[]; generatedAt: string;
 }
 
-interface Props {
-  clipId: string;
-  previewActive: boolean;
-  onPreview: (recipe: CloneRecipe) => void;
-}
+interface Props { clipId: string }
 
 function compact(n: number): string {
   if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
@@ -56,26 +52,14 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  if (!value) return null;
-  return (
-    <div>
-      <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1">{label}</p>
-      <div className="flex items-start gap-2 bg-surface-700/60 rounded-lg px-2.5 py-2">
-        <p className="text-xs text-white flex-1 leading-relaxed">{value}</p>
-        <CopyButton text={value} />
-      </div>
-    </div>
-  );
-}
-
-export default function RemixPanel({ clipId, previewActive, onPreview }: Props) {
+export default function ViralTipsPanel({ clipId }: Props) {
   const [remix, setRemix] = useState<Remix | null>(null);
   const [picks, setPicks] = useState<Set<string>>(new Set());
   const [finding, setFinding] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showRefs, setShowRefs] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -92,6 +76,15 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
       setInitialLoad(false);
     })();
   }, [clipId]);
+
+  // Auto-clone (debounced) when the user picks references.
+  useEffect(() => {
+    if (picks.size === 0 || cloning) return;
+    if (remix?.recipe && remix.pickedIds && [...picks].every((id) => remix.pickedIds!.includes(id))) return;
+    const timer = setTimeout(() => { void cloneFromPicks(); }, 1500);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picks]);
 
   async function findRefs() {
     setFinding(true);
@@ -123,7 +116,7 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Failed to clone style");
+        setError(data.error || "Failed to build tips");
       } else {
         setRemix(data.remix);
       }
@@ -149,14 +142,14 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
     <div className="p-4 space-y-4">
       <div>
         <p className="text-sm text-white font-medium flex items-center gap-1.5">
-          <Sparkles className="w-4 h-4 text-brand-400" /> Viral Remix
+          <Sparkles className="w-4 h-4 text-brand-400" /> Go Viral
         </p>
         <p className="text-xs text-surface-500 mt-0.5">
-          Find 10 viral videos in your niche, pick the ones to copy, and let AI remix your clip in their exact style.
+          What to do to go viral with this clip. Pick a few viral references and the AI
+          will draft a beat-by-beat playbook for you to follow. Nothing is burned onto the clip.
         </p>
       </div>
 
-      {/* Find / refind */}
       {!initialLoad && (
         <button
           onClick={findRefs}
@@ -190,13 +183,21 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
       {candidates.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] text-surface-500 uppercase tracking-wider">
-              References ({candidates.length})
-            </p>
+            <button
+              onClick={() => setShowRefs((s) => !s)}
+              className="flex items-center gap-1 text-[10px] text-surface-500 uppercase tracking-wider hover:text-surface-300 transition-colors"
+              aria-expanded={showRefs}
+            >
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${showRefs ? "" : "-rotate-90"}`}
+              />
+              <span>References ({candidates.length})</span>
+            </button>
             <p className="text-[10px] text-brand-300 font-semibold">
               {picks.size} picked{picks.size > 0 ? ` / 5 max` : ""}
             </p>
           </div>
+          {showRefs && (
           <div className="space-y-2">
             {candidates.map((v) => {
               const picked = picks.has(v.videoId);
@@ -256,38 +257,24 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
               );
             })}
           </div>
-
-          {/* Sticky-ish CTA — only appears once 1+ refs are picked */}
-          {picks.size > 0 && (
-            <button
-              onClick={cloneFromPicks}
-              disabled={cloning}
-              className="w-full mt-3 flex items-center justify-center gap-1.5 bg-gradient-to-r from-brand-500 to-purple-600 hover:from-brand-400 hover:to-purple-500 disabled:opacity-50 text-white text-xs py-2.5 rounded-lg font-semibold transition-colors"
-            >
-              {cloning ? (
-                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Cloning style…</>
-              ) : (
-                <><Sparkles className="w-3.5 h-3.5" /> Remix my clip in {picks.size === 1 ? "this style" : `these ${picks.size} styles`}</>
-              )}
-            </button>
           )}
 
           {cloning && (
-            <p className="text-[10px] text-surface-500 text-center leading-relaxed mt-1">
-              Studying the picks and building a beat-by-beat plan. ~10-20s.
+            <p className="text-[10px] text-surface-500 text-center leading-relaxed mt-2">
+              <Loader2 className="inline w-3 h-3 animate-spin mr-1" />
+              Studying the picks and drafting your playbook. ~10-20s.
             </p>
           )}
         </div>
       )}
 
-      {/* Clone recipe — the AI's style-clone plan for the user's clip */}
+      {/* The playbook — read-only tips for going viral */}
       {recipe && (
         <div className="space-y-3 pt-2 border-t border-surface-700">
-          {/* Style summary + predicted score */}
           <div className="bg-gradient-to-br from-brand-900/50 to-purple-900/40 border border-brand-800/60 rounded-xl p-3">
             <div className="flex items-center justify-between gap-2 mb-1">
               <span className="text-[10px] text-brand-300 uppercase tracking-wider font-semibold">
-                Cloned style
+                Your viral playbook
               </span>
               <span className="inline-flex items-center gap-1 bg-brand-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                 <TrendingUp className="w-3 h-3" /> {recipe.predictedScore}% viral
@@ -296,49 +283,12 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
             <p className="text-xs text-white leading-relaxed">{recipe.styleSummary}</p>
             {recipe.clonedFrom?.length > 0 && (
               <p className="text-[10px] text-surface-400 mt-2 line-clamp-2">
-                <span className="text-surface-500">From: </span>
+                <span className="text-surface-500">Modeled after: </span>
                 {recipe.clonedFrom.map((c) => `"${c.title}"`).join(", ")}
               </p>
             )}
           </div>
 
-          {/* Preview Edit — applies the AI's planned changes to the canvas
-              without writing to the DB. The editor shows a Save/Discard bar
-              so you can A/B and confirm. */}
-          <button
-            onClick={() => onPreview(recipe)}
-            disabled={previewActive}
-            className="w-full flex items-center justify-center gap-1.5 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-60 text-black text-xs py-2.5 rounded-lg font-semibold transition-colors"
-          >
-            {previewActive ? (
-              <><Check className="w-3.5 h-3.5" /> Previewing — use Save / Discard below</>
-            ) : (
-              <><Sparkles className="w-3.5 h-3.5" /> Preview this edit on my clip</>
-            )}
-          </button>
-          <p className="text-[10px] text-surface-500 leading-relaxed -mt-1">
-            Shows the hook overlay, title, and caption style live on the preview without saving.
-            Use the Save / Discard bar that appears below the preview to commit or revert.
-          </p>
-
-          <Field label="3-second hook" value={recipe.hook} />
-          <Field label="On-screen hook text" value={recipe.hookText} />
-          <Field label="Suggested title" value={recipe.suggestedTitle} />
-
-          {/* Music vibe */}
-          {recipe.musicVibe && (
-            <div>
-              <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-                <Music2 className="w-3 h-3" /> Music / sound vibe
-              </p>
-              <div className="flex items-start gap-2 bg-surface-700/60 rounded-lg px-2.5 py-2">
-                <p className="text-xs text-white flex-1 leading-relaxed">{recipe.musicVibe}</p>
-                <CopyButton text={recipe.musicVibe} />
-              </div>
-            </div>
-          )}
-
-          {/* Edit beats — the beat-by-beat plan */}
           {recipe.editBeats?.length > 0 && (
             <div>
               <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1 flex items-center gap-1">
@@ -360,17 +310,6 @@ export default function RemixPanel({ clipId, previewActive, onPreview }: Props) 
             </div>
           )}
 
-          {/* Caption style — shown as info; applied via the Preview button. */}
-          <div>
-            <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-1">
-              Caption style
-            </p>
-            <span className="text-xs text-white capitalize bg-surface-700/60 rounded-lg px-2.5 py-2 block">
-              {recipe.captionStyle.replace("-", " ")}
-            </span>
-          </div>
-
-          {/* Hashtags */}
           {recipe.hashtags.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-1">

@@ -55,11 +55,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     let beats: Beat[] = [];
     try {
       const lc = clip.layoutConfig ? JSON.parse(clip.layoutConfig) : {};
-      overlayText = String(lc.overlayText || "").trim();
+      overlayText = lc.overlayEnabled === false ? "" : String(lc.overlayText || "").trim();
       overlayDuration = Number(lc.overlayDuration) || 3;
-      musicUrl = String(lc.musicUrl || "").trim();
+      musicUrl = lc.musicEnabled === false ? "" : String(lc.musicUrl || "").trim();
       musicVolume = Number(lc.musicVolume ?? 0.25);
-      if (Array.isArray(lc.beatOverlays)) {
+      if (lc.beatOverlaysEnabled !== false && Array.isArray(lc.beatOverlays)) {
         beats = lc.beatOverlays
           .map((b: Record<string, unknown>) => ({
             text: String(b.text ?? ""),
