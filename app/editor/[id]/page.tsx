@@ -157,7 +157,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       return;
     }
     setLayout(previewSnapshot.layout);
-    setCaptionConfig((prev) => ({ ...prev, style: previewSnapshot.captionStyle }));
+    setCaptionConfig((prev) => ({ ...prev, style: previewSnapshot.captionStyle as typeof prev.style }));
     setCaptionsEnabled(previewSnapshot.captionsEnabled);
     setClip((prev) => (prev ? { ...prev, title: previewSnapshot.title } : prev));
     setPreviewSnapshot(null);
@@ -451,9 +451,9 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           <div className="flex-1 text-xs text-green-200 leading-relaxed">
             <span className="font-semibold">Remix applied to your clip:</span>{" "}
             {remixApplied.overlay && (
-              <>hook overlay "<span className="font-mono">{remixApplied.overlay}</span>" burned onto the first {layout.overlayDuration}s · </>
+              <>hook overlay &ldquo;<span className="font-mono">{remixApplied.overlay}</span>&rdquo; burned onto the first {layout.overlayDuration}s · </>
             )}
-            {remixApplied.title && <>title set to "<span className="italic">{remixApplied.title}</span>" · </>}
+            {remixApplied.title && <>title set to &ldquo;<span className="italic">{remixApplied.title}</span>&rdquo; · </>}
             {remixApplied.style && <>caption style: <span className="font-medium capitalize">{remixApplied.style.replace("-", " ")}</span></>}
           </div>
           <button

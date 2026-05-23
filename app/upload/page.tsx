@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Upload, Film, ArrowLeft, CheckCircle, Zap, CloudUpload } from "lucide-react";
+import { Upload, Film, ArrowLeft, CheckCircle, Zap, CloudUpload, Scissors, Sparkles } from "lucide-react";
 import { formatFileSize } from "@/lib/utils";
 
 type UploadPhase = "idle" | "uploading" | "uploaded" | "error";
@@ -51,15 +51,14 @@ export default function UploadPage() {
   const [progress, setProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
-  const [autoProcess, setAutoProcess] = useState(true);
   const [statusText, setStatusText] = useState("");
 
-  // Auto-detect viral clips — when off, processing still runs (audio,
-  // proxy, waveform, transcript) but no clips are pre-created; the user
-  // authors them by hand from the source editor.
-  const [autoDetect, setAutoDetect] = useState(false);
+  // "manual" = light prep only (proxy + waveform) then drop the user
+  // straight into the source editor to cut clips one at a time. "ai" =
+  // full pipeline: transcript + highlight detection + per-clip Coach.
+  const [mode, setMode] = useState<"manual" | "ai">("manual");
   // Smart Import — AI keeps the best part of each detected clip. Only
-  // relevant when autoDetect is on.
+  // relevant in AI mode.
   const [smartImport, setSmartImport] = useState(true);
   const [minLen, setMinLen] = useState(15);
   const [maxLen, setMaxLen] = useState(60);
@@ -138,18 +137,21 @@ export default function UploadPage() {
       const completeData = await completeRes.json();
       if (!completeRes.ok) throw new Error(completeData.error ?? "Failed to finalise upload");
 
-      setStatusText("Upload complete! Starting AI…");
+      setStatusText(mode === "manual" ? "Upload complete! Preparing source…" : "Upload complete! Starting AI…");
       setPhase("uploaded");
 
-      if (autoProcess) {
-        await fetch(`/api/process/${projectId}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ autoDetect, smartImport, minLen, maxLen }),
-        });
-      }
+      await fetch(`/api/process/${projectId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, smartImport, minLen, maxLen }),
+      });
 
-      setTimeout(() => router.push(`/projects/${projectId}`), 1500);
+      // Manual mode drops the user straight into the source editor; the
+      // editor polls for waveform + proxy as light prep finishes. AI mode
+      // goes to the project page where the clip grid populates as the
+      // pipeline runs.
+      const dest = mode === "manual" ? `/source/${projectId}` : `/projects/${projectId}`;
+      setTimeout(() => router.push(dest), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
@@ -180,7 +182,11 @@ export default function UploadPage() {
             </div>
             <div>
               <h2 className="text-2xl font-bold text-white mb-1">Upload complete!</h2>
-              <p className="text-surface-500">AI is now finding your best moments…</p>
+              <p className="text-surface-500">
+                {mode === "manual"
+                  ? "Opening the source editor — you'll cut clips by hand."
+                  : "AI is now finding your best moments…"}
+              </p>
             </div>
             <div className="flex gap-2 mt-2">
               {[1, 2, 3].map((i) => (
@@ -277,78 +283,86 @@ export default function UploadPage() {
 
             {file && phase !== "uploading" && (
               <div className="mt-6 space-y-4">
-                <div className="flex items-center justify-between p-4 bg-surface-800 rounded-xl border border-surface-600">
-                  <div>
-                    <p className="text-white text-sm font-medium">Auto-detect highlights with AI</p>
-                    <p className="text-surface-500 text-xs mt-0.5">Transcribe & find viral moments automatically</p>
+                <div>
+                  <p className="text-xs text-surface-500 uppercase tracking-wider mb-2 px-1">How do you want to clip this?</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setMode("manual")}
+                      className={`text-left p-4 rounded-xl border transition-all ${
+                        mode === "manual"
+                          ? "border-brand-500 bg-brand-900/30 ring-2 ring-brand-500/40"
+                          : "border-surface-600 bg-surface-800 hover:border-surface-500"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Scissors className={`w-4 h-4 ${mode === "manual" ? "text-brand-300" : "text-surface-400"}`} />
+                        <span className="text-white text-sm font-semibold">Manual</span>
+                      </div>
+                      <p className="text-surface-400 text-[11px] leading-snug">
+                        I&rsquo;ll cut clips myself in the editor. No AI runs until I&rsquo;m done.
+                      </p>
+                    </button>
+                    <button
+                      onClick={() => setMode("ai")}
+                      className={`text-left p-4 rounded-xl border transition-all ${
+                        mode === "ai"
+                          ? "border-brand-500 bg-brand-900/30 ring-2 ring-brand-500/40"
+                          : "border-surface-600 bg-surface-800 hover:border-surface-500"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Sparkles className={`w-4 h-4 ${mode === "ai" ? "text-brand-300" : "text-surface-400"}`} />
+                        <span className="text-white text-sm font-semibold">AI auto-clip</span>
+                      </div>
+                      <p className="text-surface-400 text-[11px] leading-snug">
+                        Find viral moments for me — transcript, scores, the works.
+                      </p>
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setAutoProcess(!autoProcess)}
-                    className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${autoProcess ? "bg-brand-600" : "bg-surface-600"}`}
-                  >
-                    <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${autoProcess ? "left-6" : "left-1"}`} />
-                  </button>
                 </div>
 
-                {autoProcess && (
+                {mode === "ai" && (
                   <div className="p-4 bg-surface-800 rounded-xl border border-surface-600 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-white text-sm font-medium">Auto-detect viral clips</p>
-                        <p className="text-surface-500 text-xs mt-0.5">Off by default — author clips by hand in the source editor</p>
+                        <p className="text-white text-sm font-medium">Smart Import — auto-trim clips</p>
+                        <p className="text-surface-500 text-xs mt-0.5">AI keeps the best part of each detected clip</p>
                       </div>
                       <button
-                        onClick={() => setAutoDetect(!autoDetect)}
-                        className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${autoDetect ? "bg-brand-600" : "bg-surface-600"}`}
+                        onClick={() => setSmartImport(!smartImport)}
+                        className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${smartImport ? "bg-brand-600" : "bg-surface-600"}`}
                       >
-                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${autoDetect ? "left-6" : "left-1"}`} />
+                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${smartImport ? "left-6" : "left-1"}`} />
                       </button>
                     </div>
 
-                    {autoDetect && (
-                      <div className="pt-3 space-y-3 border-t border-surface-700">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-white text-sm font-medium">Smart Import — auto-trim clips</p>
-                            <p className="text-surface-500 text-xs mt-0.5">AI keeps the best part of each detected clip</p>
-                          </div>
-                          <button
-                            onClick={() => setSmartImport(!smartImport)}
-                            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${smartImport ? "bg-brand-600" : "bg-surface-600"}`}
-                          >
-                            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all duration-200 ${smartImport ? "left-6" : "left-1"}`} />
-                          </button>
+                    {smartImport && (
+                      <div className="pt-1 space-y-2.5 border-t border-surface-700">
+                        <div className="flex justify-between text-xs pt-2.5">
+                          <span className="text-surface-400">Clip length range</span>
+                          <span className="text-brand-300 font-medium tabular-nums">{minLen}s – {maxLen}s</span>
                         </div>
-
-                        {smartImport && (
-                          <div className="pt-1 space-y-2.5 border-t border-surface-700">
-                            <div className="flex justify-between text-xs pt-2.5">
-                              <span className="text-surface-400">Clip length range</span>
-                              <span className="text-brand-300 font-medium tabular-nums">{minLen}s – {maxLen}s</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-surface-500 w-7">Min</span>
-                              <input
-                                type="range" min={10} max={90} step={5} value={minLen}
-                                onChange={(e) => setMinLen(Math.min(parseInt(e.target.value), maxLen))}
-                                className="flex-1 accent-brand-500"
-                              />
-                              <span className="text-[10px] text-white w-8 text-right tabular-nums">{minLen}s</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-surface-500 w-7">Max</span>
-                              <input
-                                type="range" min={10} max={90} step={5} value={maxLen}
-                                onChange={(e) => setMaxLen(Math.max(parseInt(e.target.value), minLen))}
-                                className="flex-1 accent-brand-500"
-                              />
-                              <span className="text-[10px] text-white w-8 text-right tabular-nums">{maxLen}s</span>
-                            </div>
-                            <p className="text-[10px] text-surface-600">
-                              AI picks the best length for each clip within this range.
-                            </p>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-surface-500 w-7">Min</span>
+                          <input
+                            type="range" min={10} max={90} step={5} value={minLen}
+                            onChange={(e) => setMinLen(Math.min(parseInt(e.target.value), maxLen))}
+                            className="flex-1 accent-brand-500"
+                          />
+                          <span className="text-[10px] text-white w-8 text-right tabular-nums">{minLen}s</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-surface-500 w-7">Max</span>
+                          <input
+                            type="range" min={10} max={90} step={5} value={maxLen}
+                            onChange={(e) => setMaxLen(Math.max(parseInt(e.target.value), minLen))}
+                            className="flex-1 accent-brand-500"
+                          />
+                          <span className="text-[10px] text-white w-8 text-right tabular-nums">{maxLen}s</span>
+                        </div>
+                        <p className="text-[10px] text-surface-600">
+                          AI picks the best length for each clip within this range.
+                        </p>
                       </div>
                     )}
                   </div>
@@ -358,8 +372,8 @@ export default function UploadPage() {
                   onClick={startUpload}
                   className="w-full bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-700 hover:to-brand-600 text-white py-4 rounded-xl font-bold text-base transition-all duration-200 flex items-center justify-center gap-2.5 shadow-lg shadow-brand-900/40"
                 >
-                  <Zap className="w-5 h-5" />
-                  {autoDetect ? "Upload & Find Viral Clips" : "Upload Video"}
+                  {mode === "manual" ? <Scissors className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                  {mode === "manual" ? "Upload & Start Editing" : "Upload & Find Viral Clips"}
                 </button>
               </div>
             )}

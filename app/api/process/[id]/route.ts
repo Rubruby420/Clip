@@ -32,10 +32,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Upload-page settings.
   const body = await req.json().catch(() => ({}));
-  // Auto-detect viral clips — off by default. When off we still run
-  // transcription so the source editor has words for captions, but we
-  // skip the AssemblyAI/LLM highlight pass and don't pre-create clips.
-  const autoDetect = body.autoDetect === true;
+  // `mode` decides the whole shape of the pipeline:
+  //   "manual" — light prep only (waveform + 720p proxy). No Whisper, no
+  //              AssemblyAI, no LLM, no Coach. The source editor lets the
+  //              user cut clips by hand; finalize later runs Coach.
+  //   "ai"     — full pipeline: transcript + highlight detection + per-clip Coach.
+  // The old `autoDetect` flag is translated for back-compat with any caller still
+  // posting the previous shape.
+  const mode: "manual" | "ai" =
+    body.mode === "manual" || body.mode === "ai"
+      ? body.mode
+      : body.autoDetect === true ? "ai" : "manual";
   const smartImport = body.smartImport === true;
   const minLen = Math.max(10, Math.min(90, Number(body.minLen) || 15));
   const maxLen = Math.max(minLen, Math.min(90, Number(body.maxLen) || 60));
@@ -89,11 +96,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         console.error("Proxy generation failed (non-fatal):", err);
       }
 
-      // 3. Transcribe with Whisper
-      const transcription = await transcribeAudio(audioPath);
+      // 3. Manual mode stops here — waveform + proxy are enough for the
+      //    source editor. Whisper / AssemblyAI / Coach get deferred to the
+      //    `/api/projects/[id]/finalize` route once the user has saved
+      //    their clips.
+      if (mode === "manual") {
+        await db.project.update({ where: { id }, data: { status: "ready" } });
+        return;
+      }
 
-      // 4. Store transcription (always — the source editor and any
-      //    later AI features rely on the full word list).
+      // 4. AI mode: full transcription via Whisper (powers highlight
+      //    detection, captions, Coach).
+      const transcription = await transcribeAudio(audioPath);
       await db.project.update({
         where: { id },
         data: {
@@ -101,14 +115,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           duration: transcription.duration,
         },
       });
-
-      // 5. Auto-detect viral clips — opt-in from the upload page. When
-      //    off, processing finishes here with zero clips and the user
-      //    authors them by hand from the source editor.
-      if (!autoDetect) {
-        await db.project.update({ where: { id }, data: { status: "ready" } });
-        return;
-      }
 
       // Detect highlights — AssemblyAI chapters first, then LLM transcript
       // analysis as a fallback so clips always get real, specific titles.

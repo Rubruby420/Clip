@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, Zap, Loader2, Film, AudioLines, Scissors, CheckCircle2,
+  ArrowLeft, Zap, Loader2, Film, AudioLines, Scissors, CheckCircle2, Sparkles, X,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
@@ -30,6 +31,7 @@ interface ProjectSummary {
 // the user drags the waveform handles to scope a clip and saves it.
 export default function SourcePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [videoSrc, setVideoSrc] = useState("");
   const [loading, setLoading] = useState(true);
@@ -45,32 +47,69 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [outTime, setOutTime] = useState(0);
 
   const [saving, setSaving] = useState(false);
-  const [savedToast, setSavedToast] = useState<string | null>(null);
+  // After a save we surface a modal asking "make more clips?" — null means
+  // no modal, otherwise it holds the clip we just saved (used in the copy
+  // and to compute the "continue from here" in-point).
+  const [justSaved, setJustSaved] = useState<SavedClip | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+
+  // Apply a fresh project payload to local state. Hoisted so the initial
+  // load and the prep-poll loop both reuse it.
+  function applyProject(p: ProjectSummary) {
+    setProject(p);
+    setVideoSrc(p.proxyUrl || p.originalUrl);
+    setHasProxy(Boolean(p.proxyUrl));
+    const dur = p.duration ?? 0;
+    if (dur > 0) {
+      setDuration((prev) => (prev === 0 ? dur : prev));
+      setOutTime((prev) => (prev === 0 ? dur : prev));
+    }
+    if (p.waveform) {
+      try { setPeaks(JSON.parse(p.waveform)); } catch {}
+    }
+    if (p.transcription) {
+      try {
+        const t = JSON.parse(p.transcription) as Transcription;
+        if (Array.isArray(t.words)) setWords(t.words);
+      } catch {}
+    }
+  }
 
   useEffect(() => {
     (async () => {
       const res = await fetch(`/api/projects/${id}`);
       if (!res.ok) { setLoading(false); return; }
       const { project: p } = await res.json() as { project: ProjectSummary };
-      setProject(p);
-      setVideoSrc(p.proxyUrl || p.originalUrl);
-      setHasProxy(Boolean(p.proxyUrl));
-      const dur = p.duration ?? 0;
-      setDuration(dur);
+      applyProject(p);
       setInTime(0);
-      setOutTime(dur);
-      if (p.waveform) {
-        try { setPeaks(JSON.parse(p.waveform)); } catch {}
-      }
-      if (p.transcription) {
-        try {
-          const t = JSON.parse(p.transcription) as Transcription;
-          if (Array.isArray(t.words)) setWords(t.words);
-        } catch {}
-      }
+      setOutTime(p.duration ?? 0);
       setLoading(false);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Poll for light-prep readiness. Manual mode kicks off /api/process in
+  // the background after upload; this page might load before proxy +
+  // waveform exist. Re-fetch every 3s until both are present, capped at
+  // ~3 min so a broken pipeline doesn't hammer the route forever.
+  const pollAttempts = useRef(0);
+  useEffect(() => {
+    if (hasProxy && peaks.length > 0) return;
+    pollAttempts.current = 0;
+    const interval = setInterval(async () => {
+      pollAttempts.current += 1;
+      if (pollAttempts.current > 60) { clearInterval(interval); return; }
+      try {
+        const res = await fetch(`/api/projects/${id}`);
+        if (!res.ok) return;
+        const { project: p } = await res.json() as { project: ProjectSummary };
+        applyProject(p);
+        if (p.proxyUrl && p.waveform) clearInterval(interval);
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, hasProxy, peaks.length]);
 
   async function handleGenerateProxy() {
     if (!project) return;
@@ -122,13 +161,10 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       const data = await res.json();
       if (res.ok && data.clip) {
         setProject((prev) => prev ? { ...prev, clips: [...prev.clips, data.clip] } : prev);
-        setSavedToast(data.clip.title);
-        // Tee up the next clip: in-point picks up where the last out-point left off.
-        const newIn = outTime;
-        setInTime(newIn);
-        setOutTime(duration);
-        setCurrentTime(newIn);
-        setTimeout(() => setSavedToast(null), 2500);
+        // Show the "make more clips?" modal — the user picks reset vs
+        // continue vs finalize from there. We do NOT auto-advance the in
+        // point any more so the modal owns the next-step decision.
+        setJustSaved(data.clip);
       } else {
         alert(data.error || "Couldn't save the clip.");
       }
@@ -136,6 +172,39 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       alert("Couldn't save the clip — check your connection.");
     }
     setSaving(false);
+  }
+
+  // Modal: Yes — find another. Reset selection to span the whole source
+  // so the user can scrub freely for their next moment.
+  function handleFindAnother() {
+    setInTime(0);
+    setOutTime(duration);
+    setCurrentTime(0);
+    setJustSaved(null);
+  }
+
+  // Modal: Yes — continue from here. Pick up where the last clip ended
+  // (the previous behaviour, just now explicit).
+  function handleContinueFromHere() {
+    if (!justSaved) return;
+    const next = justSaved.endTime;
+    setInTime(next);
+    setOutTime(duration);
+    setCurrentTime(next);
+    setJustSaved(null);
+  }
+
+  // Modal: No — done. Kick off Coach scoring on every saved clip and head
+  // back to the project page where scores + thumbnails fill in as Coach
+  // finishes each one.
+  async function handleFinalize() {
+    setFinalizing(true);
+    try {
+      await fetch(`/api/projects/${id}/finalize`, { method: "POST" });
+    } catch {
+      // Non-fatal — even if the kickoff fails the clips are already saved.
+    }
+    router.push(`/projects/${id}`);
   }
 
   if (loading) {
@@ -206,10 +275,12 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         </div>
       </header>
 
-      {savedToast && (
-        <div className="shrink-0 px-4 py-2 bg-green-900/40 border-b border-green-800/60 flex items-center gap-2 text-xs text-green-200">
-          <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
-          Saved: <span className="text-white font-medium">{savedToast}</span>
+      {project && (peaks.length === 0 || !hasProxy) && (
+        <div className="shrink-0 px-4 py-2 bg-yellow-900/30 border-b border-yellow-800/60 flex items-center gap-2 text-xs text-yellow-200">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400" />
+          Preparing source — {peaks.length === 0 ? "waveform" : null}
+          {peaks.length === 0 && !hasProxy ? " + " : null}
+          {!hasProxy ? "preview" : null} still rendering. The editor will refresh when ready.
         </div>
       )}
 
@@ -290,6 +361,76 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           onSeek={(t) => setCurrentTime(t)}
         />
       </div>
+
+      {justSaved && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-surface-800 border border-surface-600 rounded-2xl shadow-2xl">
+            <div className="p-5 border-b border-surface-700 flex items-start gap-3">
+              <div className="w-9 h-9 rounded-lg bg-green-500/20 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-5 h-5 text-green-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-white text-sm font-semibold">Saved &ldquo;{justSaved.title}&rdquo;</p>
+                <p className="text-surface-400 text-xs mt-0.5 tabular-nums">
+                  {formatDuration(justSaved.startTime)} – {formatDuration(justSaved.endTime)}
+                  <span className="text-surface-600"> · {formatDuration(justSaved.endTime - justSaved.startTime)}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setJustSaved(null)}
+                className="text-surface-500 hover:text-white transition-colors p-1 rounded"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-white text-base font-semibold">Make more clips?</p>
+              <button
+                onClick={handleFindAnother}
+                disabled={finalizing}
+                className="w-full text-left px-4 py-3 rounded-xl bg-surface-700 hover:bg-surface-600 border border-surface-600 hover:border-brand-600 transition-colors disabled:opacity-50 flex items-center gap-3"
+              >
+                <Scissors className="w-4 h-4 text-brand-300 shrink-0" />
+                <div>
+                  <p className="text-white text-sm font-medium">Yes — find another</p>
+                  <p className="text-surface-400 text-[11px]">Reset the timeline so I can scrub for the next moment.</p>
+                </div>
+              </button>
+              <button
+                onClick={handleContinueFromHere}
+                disabled={finalizing}
+                className="w-full text-left px-4 py-3 rounded-xl bg-surface-700 hover:bg-surface-600 border border-surface-600 hover:border-brand-600 transition-colors disabled:opacity-50 flex items-center gap-3"
+              >
+                <Film className="w-4 h-4 text-brand-300 shrink-0" />
+                <div>
+                  <p className="text-white text-sm font-medium">Yes — continue from here</p>
+                  <p className="text-surface-400 text-[11px]">Keep playing from where this clip ended.</p>
+                </div>
+              </button>
+              <button
+                onClick={handleFinalize}
+                disabled={finalizing}
+                className="w-full text-left px-4 py-3 rounded-xl bg-brand-900/40 hover:bg-brand-900/60 border border-brand-700 hover:border-brand-500 transition-colors disabled:opacity-50 flex items-center gap-3"
+              >
+                {finalizing ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-brand-300 shrink-0" />
+                ) : (
+                  <Sparkles className="w-4 h-4 text-brand-300 shrink-0" />
+                )}
+                <div>
+                  <p className="text-white text-sm font-medium">
+                    {finalizing ? "Starting Coach…" : "No — finalize & let AI score them"}
+                  </p>
+                  <p className="text-surface-400 text-[11px]">
+                    Coach grades each saved clip. You can always come back to make more.
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

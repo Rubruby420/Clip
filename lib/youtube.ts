@@ -27,6 +27,7 @@ function parseDuration(iso: string): number {
   return (+(m[1] || 0)) * 3600 + (+(m[2] || 0)) * 60 + (+(m[3] || 0));
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ytFetch(path: string): Promise<any> {
   const res = await fetch(`${API}/${path}`);
   if (!res.ok) {
@@ -86,6 +87,7 @@ export async function searchViralVideos(queries: string[]): Promise<ViralVideo[]
   });
   const data = await ytFetch(`videos?${params}`);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const videos: ViralVideo[] = (data.items ?? []).map((v: any) => {
     const stats = v.statistics ?? {};
     const sn = v.snippet ?? {};

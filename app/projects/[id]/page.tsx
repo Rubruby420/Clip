@@ -120,29 +120,30 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <Link
               href={`/source/${project.id}`}
               className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
-              title="Open the source editor and author clips by hand"
+              title="Jump back to the source editor and cut more clips by hand"
             >
-              <Scissors className="w-4 h-4" /> Edit source
+              <Scissors className="w-4 h-4" /> Make more clips
             </Link>
           )}
         </div>
 
-        {/* Processing state */}
+        {/* Processing state — shown for the initial pipeline run AND for
+            the post-manual finalize pass. Copy is neutral enough to cover
+            both. */}
         {(project.status === "processing" || project.status === "uploading" || project.status === "uploaded") && (
           <div className="bg-surface-800 border border-surface-600 rounded-xl p-8 mb-8 flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-2xl bg-brand-900/40 flex items-center justify-center">
               <Loader2 className="w-8 h-8 animate-spin text-brand-400" />
             </div>
             <div>
-              <p className="text-white font-semibold text-lg">AI is analysing your recording</p>
-              <p className="text-surface-500 text-sm mt-1">Transcribing speech, detecting highlights, and scoring virality…</p>
-            </div>
-            <div className="flex gap-3 text-xs text-surface-500">
-              {["Transcription", "Highlight detection", "Virality scoring"].map((step) => (
-                <span key={step} className="flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" /> {step}
-                </span>
-              ))}
+              <p className="text-white font-semibold text-lg">
+                {project.clips.length > 0 ? "Coach is scoring your clips" : "Preparing your project"}
+              </p>
+              <p className="text-surface-500 text-sm mt-1">
+                {project.clips.length > 0
+                  ? "Transcribing each clip and grading it for virality. Scores will appear below as they finish."
+                  : "Rendering a 720p preview and building the waveform for the editor…"}
+              </p>
             </div>
           </div>
         )}
@@ -150,7 +151,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         {/* Clips grid */}
         {project.clips.length > 0 && (
           <div>
-            <h2 className="text-lg font-semibold text-white mb-4">AI-Detected Clips</h2>
+            <h2 className="text-lg font-semibold text-white mb-4">Clips</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {project.clips.map((clip) => {
                 const duration = clip.endTime - clip.startTime;
@@ -223,14 +224,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <Scissors className="w-12 h-12 mx-auto mb-3 opacity-50" />
             <p className="text-white font-medium mb-1">No clips yet</p>
             <p className="text-sm mb-5">
-              This source has been transcribed and is ready to cut. Open the source editor,
-              drag the waveform handles to scope a clip, and save.
+              Open the source editor, drag the waveform handles to scope a clip, and save —
+              one at a time. When you&rsquo;re done, AI scores each clip.
             </p>
             <Link
               href={`/source/${project.id}`}
               className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
             >
-              <Scissors className="w-4 h-4" /> Open source editor
+              <Scissors className="w-4 h-4" /> Make a clip
             </Link>
           </div>
         )}

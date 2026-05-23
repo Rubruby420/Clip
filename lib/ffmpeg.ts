@@ -19,6 +19,24 @@ export async function extractAudio(videoPath: string, outputPath: string): Promi
   await execAsync(`"${bin}" -y -i "${videoPath}" -vn -ar 16000 -ac 1 -b:a 64k "${outputPath}"`);
 }
 
+// Extract just the audio for a [startSec, endSec] slice of the source.
+// Used by /api/projects/[id]/finalize so the manual-mode pipeline can
+// Whisper-transcribe just the saved clips instead of the full source.
+export async function extractAudioSegment(
+  videoPath: string,
+  outputPath: string,
+  startSec: number,
+  endSec: number,
+): Promise<void> {
+  const bin = ffmpegBin();
+  const duration = Math.max(0.1, endSec - startSec);
+  // -ss before -i is faster (keyframe seek); for an audio-only slice the
+  // precision loss is negligible.
+  await execAsync(
+    `"${bin}" -y -ss ${startSec} -t ${duration} -i "${videoPath}" -vn -ar 16000 -ac 1 -b:a 64k "${outputPath}"`,
+  );
+}
+
 // 720p H.264 mp4 used by the editor preview so 4K sources don't crush
 // playback. Export reads the original instead, so final quality is
 // untouched. veryfast/crf 26 keeps the encode time tolerable for long
