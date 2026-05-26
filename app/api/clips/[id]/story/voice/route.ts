@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { generateVoiceover, isTtsVoice } from "@/lib/story";
-import { uploadBuffer } from "@/lib/r2";
+import { resolveStorage, ensureDirFor, clipVoicePath } from "@/lib/storage";
+import fs from "fs/promises";
 
 // POST — generate AI voiceover audio from a (possibly edited) story script.
 // Body: { script: string, voice?: string }
@@ -19,23 +20,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     const audio = await generateVoiceover(script, voice);
-    const voiceUrl = await uploadBuffer(
-      `voiceovers/${id}-${Date.now()}.mp3`,
-      audio,
-      "audio/mpeg"
-    );
 
-    // Persist the voiceover URL on the stored story plan.
+    const voiceRel = clipVoicePath(clip.projectId, id);
+    const voiceAbs = resolveStorage(voiceRel);
+    await ensureDirFor(voiceAbs);
+    await fs.writeFile(voiceAbs, audio);
+
+    // Persist the relative path on the stored story plan.
     if (clip.storyData) {
       try {
         const story = JSON.parse(clip.storyData);
-        story.voiceUrl = voiceUrl;
+        story.voiceUrl = voiceRel;
         story.voice = voice;
         await db.clip.update({ where: { id }, data: { storyData: JSON.stringify(story) } });
       } catch {}
     }
 
-    return NextResponse.json({ voiceUrl, voice });
+    return NextResponse.json({ voiceUrl: voiceRel, voice });
   } catch (err) {
     console.error("Voiceover generation error:", err);
     return NextResponse.json(
