@@ -131,6 +131,39 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // a perpetually-spinning loader.
   const [pollExhausted, setPollExhausted] = useState(false);
   const pollAttempts = useRef(0);
+
+  // Time-based estimated progress for the prep banner. FFmpeg progress
+  // isn't piped through the API, so this is a budgeted estimate (linear
+  // to 90% across the expected duration, then a slow creep toward 95%).
+  // The bar disappears the moment prep finishes — it's only a "things
+  // are moving" signal, not a measurement.
+  const prepPending = peaks.length === 0 || !hasProxy;
+  const prepStartedAt = useRef<number | null>(null);
+  const [prepProgress, setPrepProgress] = useState(0);
+  useEffect(() => {
+    if (!prepPending) {
+      prepStartedAt.current = null;
+      setPrepProgress(0);
+      return;
+    }
+    if (prepStartedAt.current === null) prepStartedAt.current = Date.now();
+    const tick = () => {
+      if (prepStartedAt.current === null) return;
+      const elapsed = (Date.now() - prepStartedAt.current) / 1000;
+      // Waveform ~45s flat. Proxy ~5% of source duration, floor 90s.
+      const waveformBudget = peaks.length === 0 ? 45 : 0;
+      const proxyBudget = !hasProxy ? Math.max(90, (duration || 600) * 0.05) : 0;
+      const totalBudget = Math.max(20, waveformBudget + proxyBudget);
+      const ratio = elapsed / totalBudget;
+      const pct = ratio < 1
+        ? ratio * 90
+        : Math.min(95, 90 + (ratio - 1) * 5);
+      setPrepProgress(pct);
+    };
+    tick();
+    const interval = setInterval(tick, 500);
+    return () => clearInterval(interval);
+  }, [prepPending, peaks.length, hasProxy, duration]);
   useEffect(() => {
     if (hasProxy && peaks.length > 0) return;
     if (generatingProxy || generatingWaveform) return;
@@ -363,20 +396,31 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         </div>
       )}
 
-      {project && (peaks.length === 0 || !hasProxy) && !pollExhausted && (
-        <div className="shrink-0 px-4 py-2 bg-yellow-900/20 border-b border-yellow-800/40 flex items-center gap-2 text-xs text-yellow-200">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400 shrink-0" />
-          <span className="flex-1">
-            {peaks.length === 0 && !hasProxy && (
-              <>Preparing your source — the timeline waveform and a smoother 720p preview are rendering in the background. You can start scrubbing now.</>
-            )}
-            {peaks.length === 0 && hasProxy && (
-              <>Building the timeline waveform — usually under a minute. The editor will fill it in automatically.</>
-            )}
-            {peaks.length > 0 && !hasProxy && (
-              <>A smoother 720p preview is rendering in the background (2-3 min for an hour-long video). The original is fine to scrub in the meantime.</>
-            )}
-          </span>
+      {project && prepPending && !pollExhausted && (
+        <div className="shrink-0 px-4 py-2 bg-yellow-900/20 border-b border-yellow-800/40 text-xs text-yellow-200">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400 shrink-0" />
+            <span className="flex-1">
+              {peaks.length === 0 && !hasProxy && (
+                <>Preparing your source — the timeline waveform and a smoother 720p preview are rendering in the background. You can start scrubbing now.</>
+              )}
+              {peaks.length === 0 && hasProxy && (
+                <>Building the timeline waveform — usually under a minute. The editor will fill it in automatically.</>
+              )}
+              {peaks.length > 0 && !hasProxy && (
+                <>A smoother 720p preview is rendering in the background (2-3 min for an hour-long video). The original is fine to scrub in the meantime.</>
+              )}
+            </span>
+            <span className="tabular-nums text-yellow-300 font-semibold w-10 text-right shrink-0">
+              {Math.round(prepProgress)}%
+            </span>
+          </div>
+          <div className="mt-1.5 h-1 w-full bg-yellow-950/60 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-yellow-400 transition-[width] duration-500 ease-out"
+              style={{ width: `${prepProgress}%` }}
+            />
+          </div>
         </div>
       )}
 
