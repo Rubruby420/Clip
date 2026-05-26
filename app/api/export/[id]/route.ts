@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { exportClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
+import {
+  resolveStorage,
+  ensureDirFor,
+  clipExportPath,
+} from "@/lib/storage";
 import fs from "fs";
 import https from "https";
 import http from "http";
 import { randomUUID } from "crypto";
 
+// Background music tracks still come from Jamendo as remote URLs.
 async function downloadFile(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -27,17 +32,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!clip) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const exportId = randomUUID();
-  const videoPath = tmpPath(`export_src_${exportId}.mp4`);
+  // Source comes straight off disk now.
+  const videoPath = resolveStorage(clip.project.originalUrl);
+  // Render to .tmp first, then copy into the project folder once FFmpeg
+  // is done so a partial file never appears at the public path.
   const outPath = tmpPath(`export_out_${exportId}.mp4`);
   const srtPath = tmpPath(`export_${exportId}.srt`);
   const hookPath = tmpPath(`export_hook_${exportId}.ass`);
   const musicPath = tmpPath(`export_music_${exportId}.mp3`);
 
   try {
-    // Download source video
-    const downloadUrl = await getDownloadPresignedUrl(clip.project.originalKey);
-    await downloadFile(downloadUrl, videoPath);
-
     // Generate SRT captions
     const words = JSON.parse(clip.words) as Array<{ word: string; start: number; end: number }>;
     if (words.length > 0) {
@@ -101,22 +105,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       blurBackground,
     });
 
-    // Upload to R2
-    const buffer = fs.readFileSync(outPath);
-    const exportKey = `exports/${exportId}.mp4`;
-    const exportUrl = await uploadBuffer(exportKey, buffer, "video/mp4");
+    // Move the finished mp4 into the clip's storage folder.
+    const exportRel = clipExportPath(clip.projectId, clip.id);
+    const exportAbs = resolveStorage(exportRel);
+    await ensureDirFor(exportAbs);
+    fs.copyFileSync(outPath, exportAbs);
 
-    // Store in DB
     const updated = await db.clip.update({
       where: { id },
-      data: { exportUrl, exportKey },
+      data: { exportUrl: exportRel, exportKey: exportRel },
     });
 
-    return NextResponse.json({ clip: updated, exportUrl });
+    return NextResponse.json({ clip: updated, exportUrl: exportRel });
   } catch (err) {
     console.error("Export error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    [videoPath, outPath, srtPath, hookPath, musicPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+    // videoPath is the real source file — leave it. Only tmp files get
+    // cleaned. (`exportId` is unused otherwise; keep it referenced.)
+    void exportId;
+    [outPath, srtPath, hookPath, musicPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
   }
 }
