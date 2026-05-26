@@ -53,6 +53,13 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [justSaved, setJustSaved] = useState<SavedClip | null>(null);
   const [finalizing, setFinalizing] = useState(false);
 
+  // When the proxy lands after the user has already been served the
+  // originalUrl, we DON'T auto-swap mid-watch — swapping src remounts
+  // the <video> element and resets playback. Instead we stash the
+  // proxy URL here and offer an explicit "Use smoother playback"
+  // upgrade button in the status banner.
+  const [pendingProxyUrl, setPendingProxyUrl] = useState<string | null>(null);
+
   // Apply a fresh project payload to local state. Hoisted so the initial
   // load and the prep-poll loop both reuse it.
   //
@@ -63,7 +70,15 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // the timeline flicker. Local state wins once a field is populated.
   function applyProject(p: ProjectSummary) {
     setProject(p);
+    // First load adopts whatever's best. After that we never auto-swap
+    // — swapping src remounts <video> and resets playback. A proxy
+    // upgrade is offered via pendingProxyUrl + an explicit upgrade button.
     setVideoSrc((prev) => prev || p.proxyUrl || p.originalUrl);
+    // If the proxy just landed but we're still on the originalUrl,
+    // surface it as a pending upgrade. Cleared once we adopt it.
+    if (p.proxyUrl) {
+      setPendingProxyUrl((prev) => prev ?? p.proxyUrl);
+    }
     setHasProxy((prev) => prev || Boolean(p.proxyUrl));
     const dur = p.duration ?? 0;
     if (dur > 0) {
@@ -109,14 +124,25 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // takes ~3 min on a long Source and the poll would otherwise race the
   // button's own state writes, causing a flicker and (when applyProject
   // was non-idempotent) restarting video playback.
+  //
+  // When the poll caps out without finishing, `pollExhausted` flips on
+  // and the UI surfaces manual generate buttons + a friendlier "auto
+  // prep didn't finish" banner instead of leaving the user staring at
+  // a perpetually-spinning loader.
+  const [pollExhausted, setPollExhausted] = useState(false);
   const pollAttempts = useRef(0);
   useEffect(() => {
     if (hasProxy && peaks.length > 0) return;
     if (generatingProxy || generatingWaveform) return;
     pollAttempts.current = 0;
+    setPollExhausted(false);
     const interval = setInterval(async () => {
       pollAttempts.current += 1;
-      if (pollAttempts.current > 60) { clearInterval(interval); return; }
+      if (pollAttempts.current > 60) {
+        clearInterval(interval);
+        setPollExhausted(true);
+        return;
+      }
       try {
         const res = await fetch(`/api/projects/${id}`);
         if (!res.ok) return;
@@ -136,8 +162,12 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       const res = await fetch(`/api/projects/${id}/proxy`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.project?.proxyUrl) {
+        // User explicitly asked for the smoother preview — swap now and
+        // accept the playback reset. They clicked the button knowing what
+        // they were getting.
         setVideoSrc(data.project.proxyUrl);
         setHasProxy(true);
+        setPendingProxyUrl(null);
       } else {
         alert(data.error || "Couldn't generate the preview.");
       }
@@ -145,6 +175,17 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       alert("Couldn't generate the preview.");
     }
     setGeneratingProxy(false);
+  }
+
+  // Adopt the proxy that landed in the background. Distinct from the
+  // manual handler because no FFmpeg call is in flight — we just swap
+  // the src. Playback reset is documented to the user via the upgrade
+  // banner so they're not surprised.
+  function handleAdoptProxy() {
+    if (!pendingProxyUrl) return;
+    setVideoSrc(pendingProxyUrl);
+    setHasProxy(true);
+    setPendingProxyUrl(null);
   }
 
   async function handleGenerateWaveform() {
@@ -227,8 +268,18 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-surface-900 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+      <div className="min-h-screen bg-surface-900 flex items-center justify-center px-6">
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+          <div className="w-12 h-12 rounded-2xl bg-brand-600/20 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
+          </div>
+          <div>
+            <p className="text-white text-base font-semibold">Loading source…</p>
+            <p className="text-surface-500 text-sm mt-1">
+              Fetching your video and any prep work that&apos;s already done.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -261,7 +312,11 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         <span className="text-white text-sm font-medium truncate max-w-[280px]">{project.title}</span>
 
         <div className="ml-auto flex items-center gap-2">
-          {peaks.length === 0 && (
+          {/* Manual generate buttons appear only when the background poll
+              has given up or the user is mid-generate — keeps the header
+              calm during the normal happy path where prep finishes on
+              its own. */}
+          {peaks.length === 0 && (generatingWaveform || pollExhausted) && (
             <button
               onClick={handleGenerateWaveform}
               disabled={generatingWaveform}
@@ -271,7 +326,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
               {generatingWaveform ? "Generating waveform…" : "Generate waveform"}
             </button>
           )}
-          {!hasProxy && (
+          {!hasProxy && (generatingProxy || pollExhausted) && (
             <button
               onClick={handleGenerateProxy}
               disabled={generatingProxy}
@@ -293,12 +348,46 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         </div>
       </header>
 
-      {project && (peaks.length === 0 || !hasProxy) && (
-        <div className="shrink-0 px-4 py-2 bg-yellow-900/30 border-b border-yellow-800/60 flex items-center gap-2 text-xs text-yellow-200">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400" />
-          Preparing source — {peaks.length === 0 ? "waveform" : null}
-          {peaks.length === 0 && !hasProxy ? " + " : null}
-          {!hasProxy ? "preview" : null} still rendering. The editor will refresh when ready.
+      {project && pendingProxyUrl && videoSrc !== pendingProxyUrl && (
+        <div className="shrink-0 px-4 py-2 bg-green-900/30 border-b border-green-800/60 flex items-center gap-2 text-xs text-green-200">
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+          <span className="flex-1">
+            Smoother 720p preview is ready. Switching will jump playback back to the start — pause first if you want to keep your spot.
+          </span>
+          <button
+            onClick={handleAdoptProxy}
+            className="px-2.5 py-1 rounded-md bg-green-600 hover:bg-green-500 text-white text-[11px] font-semibold transition-colors"
+          >
+            Use smoother playback
+          </button>
+        </div>
+      )}
+
+      {project && (peaks.length === 0 || !hasProxy) && !pollExhausted && (
+        <div className="shrink-0 px-4 py-2 bg-yellow-900/20 border-b border-yellow-800/40 flex items-center gap-2 text-xs text-yellow-200">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400 shrink-0" />
+          <span className="flex-1">
+            {peaks.length === 0 && !hasProxy && (
+              <>Preparing your source — the timeline waveform and a smoother 720p preview are rendering in the background. You can start scrubbing now.</>
+            )}
+            {peaks.length === 0 && hasProxy && (
+              <>Building the timeline waveform — usually under a minute. The editor will fill it in automatically.</>
+            )}
+            {peaks.length > 0 && !hasProxy && (
+              <>A smoother 720p preview is rendering in the background (2-3 min for an hour-long video). The original is fine to scrub in the meantime.</>
+            )}
+          </span>
+        </div>
+      )}
+
+      {project && (peaks.length === 0 || !hasProxy) && pollExhausted && (
+        <div className="shrink-0 px-4 py-2 bg-orange-900/30 border-b border-orange-800/60 flex items-center gap-2 text-xs text-orange-200">
+          <span className="flex-1">
+            Auto-prep didn&apos;t finish on its own. Use the
+            {peaks.length === 0 ? " “Generate waveform”" : ""}
+            {peaks.length === 0 && !hasProxy ? " and " : ""}
+            {!hasProxy ? " “Smoother preview”" : ""} button{peaks.length === 0 && !hasProxy ? "s" : ""} in the header to run it manually.
+          </span>
         </div>
       )}
 
@@ -356,8 +445,11 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                 endTime={duration}
               />
             ) : (
-              <div className="aspect-[9/16] bg-surface-800 rounded-xl flex items-center justify-center">
-                <Loader2 className="w-8 h-8 animate-spin text-surface-500" />
+              <div className="aspect-[9/16] bg-surface-800 rounded-xl flex flex-col items-center justify-center gap-3 px-6 text-center">
+                <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
+                <p className="text-xs text-surface-400 leading-relaxed">
+                  Loading the video player…
+                </p>
               </div>
             )}
           </div>

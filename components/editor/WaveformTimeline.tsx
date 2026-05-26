@@ -110,9 +110,32 @@ export default function WaveformTimeline({
         }}
       >
         <svg width={width} height={height} className="block">
-          {/* Waveform bars (or a flat placeholder if peaks aren't ready) */}
+          {/* Waveform bars. When peaks aren't ready yet we render a
+              shimmer-style skeleton of varying-height bars so the area
+              looks like it's loading, not broken. A flat 2px line read
+              as "this thing is empty / unavailable." */}
           {peaks.length === 0 ? (
-            <rect x={0} y={height / 2 - 1} width={width} height={2} fill="#4b5168" />
+            <g className="animate-pulse">
+              {Array.from({ length: barCount }).map((_, i) => {
+                // Smooth pseudo-random heights so the skeleton has the
+                // visual rhythm of a real waveform without claiming to
+                // be real data. Two superposed sines + offset to avoid
+                // a perfect repeat.
+                const phase = (i / barCount) * Math.PI * 6;
+                const h = Math.max(2, (Math.sin(phase) * 0.35 + Math.sin(phase * 0.5 + 1.7) * 0.25 + 0.45) * height * 0.6);
+                return (
+                  <rect
+                    key={i}
+                    x={i * (barWidth + gap)}
+                    y={(height - h) / 2}
+                    width={barWidth}
+                    height={h}
+                    rx={1}
+                    fill="#3a3a44"
+                  />
+                );
+              })}
+            </g>
           ) : (
             bars.map((b, i) => (
               <rect
