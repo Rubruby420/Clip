@@ -1,38 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { transcribeAudio } from "@/lib/whisper";
 import { evaluateClip } from "@/lib/coach";
 import { extractAudioSegment, extractThumbnail, tmpPath } from "@/lib/ffmpeg";
+import {
+  resolveStorage,
+  ensureDirFor,
+  clipThumbPath,
+} from "@/lib/storage";
 import fs from "fs";
-import https from "https";
-import http from "http";
 
 // Triggered when the user hits "No — finalize" in the source editor after
 // authoring clips by hand. For each saved clip that hasn't been scored
 // yet, transcribe its audio segment with Whisper, generate a thumbnail,
 // and run Coach. We do NOT touch the clip boundaries — the user's cuts
 // are the source of truth here.
-async function downloadFile(url: string, dest: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    const client = url.startsWith("https") ? https : http;
-    client.get(url, (res) => {
-      res.pipe(file);
-      file.on("finish", () => file.close(() => resolve()));
-      file.on("error", reject);
-    }).on("error", reject);
-  });
-}
-
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Only act on clips that haven't already been scored, so a second
-  // finalize pass (after the user comes back to make more) doesn't redo
-  // work or run up the OpenAI bill.
+  // Only act on clips that haven't already been scored.
   const pending = await db.clip.findMany({
     where: { projectId: id, coachData: null },
   });
@@ -43,15 +31,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   await db.project.update({ where: { id }, data: { status: "processing" } });
 
   (async () => {
-    const videoPath = tmpPath(`${id}_finalize.mp4`);
+    const videoPath = resolveStorage(project.originalUrl);
 
     try {
-      const downloadUrl = await getDownloadPresignedUrl(project.originalKey);
-      await downloadFile(downloadUrl, videoPath);
-
       for (const clip of pending) {
         const audioPath = tmpPath(`${clip.id}_seg.mp3`);
-        const thumbPath = tmpPath(`${clip.id}_thumb.jpg`);
 
         try {
           await extractAudioSegment(videoPath, audioPath, clip.startTime, clip.endTime);
@@ -62,11 +46,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
           let thumbnailUrl = clip.thumbnailUrl ?? "";
           if (!thumbnailUrl) {
-            await extractThumbnail(videoPath, thumbPath, clip.startTime + 1).catch(() => null);
-            if (fs.existsSync(thumbPath)) {
-              const buf = fs.readFileSync(thumbPath);
-              thumbnailUrl = await uploadBuffer(`thumbnails/${clip.id}.jpg`, buf, "image/jpeg");
-            }
+            const thumbRel = clipThumbPath(id, clip.id);
+            const thumbAbs = resolveStorage(thumbRel);
+            await ensureDirFor(thumbAbs);
+            await extractThumbnail(videoPath, thumbAbs, clip.startTime + 1).catch(() => null);
+            if (fs.existsSync(thumbAbs)) thumbnailUrl = thumbRel;
           }
 
           const transcriptText = transcription
@@ -88,9 +72,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
               words: transcription
                 ? JSON.stringify(transcription.words.map((w) => ({
                     word: w.word,
-                    // sliceWords-style: relative to the clip start. The
-                    // segment audio already starts at 0, so the Whisper
-                    // timestamps are clip-local — store them as-is.
                     start: w.start,
                     end: w.end,
                   })))
@@ -102,7 +83,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
             },
           });
         } finally {
-          [audioPath, thumbPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+          try { fs.unlinkSync(audioPath); } catch {}
         }
       }
 
@@ -110,8 +91,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     } catch (err) {
       console.error("Finalize error:", err);
       await db.project.update({ where: { id }, data: { status: "error" } }).catch(() => null);
-    } finally {
-      try { fs.unlinkSync(videoPath); } catch {}
     }
   })();
 

@@ -1,46 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { generatePreviewProxy, tmpPath } from "@/lib/ffmpeg";
+import {
+  resolveStorage,
+  ensureDirFor,
+  projectProxyPath,
+} from "@/lib/storage";
 import fs from "fs";
-import https from "https";
-import http from "http";
-
-async function downloadFile(url: string, dest: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    const client = url.startsWith("https") ? https : http;
-    client.get(url, (res) => {
-      res.pipe(file);
-      file.on("finish", () => file.close(() => resolve()));
-      file.on("error", reject);
-    }).on("error", reject);
-  });
-}
+import fsp from "fs/promises";
 
 // Generates the 720p preview proxy for a project on demand. Used for
-// projects uploaded before proxy support existed — the editor calls this
-// from a "Generate preview" button when project.proxyUrl is null.
+// projects that don't have a proxy yet — the editor calls this from a
+// "Generate preview" button when project.proxyUrl is null.
 export async function POST(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const videoPath = tmpPath(`${id}_proxy_src.mp4`);
-  const proxyPath = tmpPath(`${id}_proxy.mp4`);
+  const videoPath = resolveStorage(project.originalUrl);
+  const proxyTmp = tmpPath(`${id}_proxy.mp4`);
   try {
-    const downloadUrl = await getDownloadPresignedUrl(project.originalKey);
-    await downloadFile(downloadUrl, videoPath);
-    await generatePreviewProxy(videoPath, proxyPath);
-    if (!fs.existsSync(proxyPath)) {
+    await generatePreviewProxy(videoPath, proxyTmp);
+    if (!fs.existsSync(proxyTmp)) {
       return NextResponse.json({ error: "Proxy file was not created" }, { status: 500 });
     }
-    const buf = fs.readFileSync(proxyPath);
-    const proxyKey = `proxies/${id}.mp4`;
-    const proxyUrl = await uploadBuffer(proxyKey, buf, "video/mp4");
+    const proxyRel = projectProxyPath(id);
+    const proxyAbs = resolveStorage(proxyRel);
+    await ensureDirFor(proxyAbs);
+    await fsp.copyFile(proxyTmp, proxyAbs);
     const updated = await db.project.update({
       where: { id },
-      data: { proxyUrl, proxyKey },
+      data: { proxyUrl: proxyRel, proxyKey: proxyRel },
     });
     return NextResponse.json({ project: updated });
   } catch (err) {
@@ -50,6 +40,6 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ id: s
       { status: 500 }
     );
   } finally {
-    [videoPath, proxyPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+    try { fs.unlinkSync(proxyTmp); } catch {}
   }
 }
