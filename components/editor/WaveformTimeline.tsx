@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatDuration } from "@/lib/utils";
 
+interface SavedClipRange {
+  id: string;
+  startTime: number;
+  endTime: number;
+}
+
 interface Props {
   peaks: number[];
   duration: number;
@@ -12,6 +18,10 @@ interface Props {
   onStartChange: (t: number) => void;
   onEndChange: (t: number) => void;
   onSeek: (t: number) => void;
+  // Already-saved clips drawn as green ranges so the user can see every
+  // auto-cut segment at a glance. Optional — empty array hides the
+  // overlay.
+  savedClips?: SavedClipRange[];
 }
 
 type DragMode = "start" | "end" | "playhead" | null;
@@ -21,7 +31,7 @@ type DragMode = "start" | "end" | "playhead" | null;
 // you can grab to scrub. Clicking the bar (outside the handles) seeks.
 export default function WaveformTimeline({
   peaks, duration, startTime, endTime, currentTime,
-  onStartChange, onEndChange, onSeek,
+  onStartChange, onEndChange, onSeek, savedClips = [],
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -157,6 +167,29 @@ export default function WaveformTimeline({
           {endX < width && (
             <rect x={endX} y={0} width={width - endX} height={height} fill="#000000" fillOpacity={0.55} />
           )}
+
+          {/* Saved clips — one green band per range, plus a vertical
+              divider on either edge so adjacent clips read as distinct
+              segments instead of one big block. */}
+          {savedClips.map((c) => {
+            const cx = tToX(c.startTime);
+            const cw = Math.max(1, tToX(c.endTime) - cx);
+            return (
+              <g key={c.id} pointerEvents="none">
+                <rect x={cx} y={0} width={cw} height={height} fill="#22c55e" fillOpacity={0.18} />
+                <line x1={cx} x2={cx} y1={0} y2={height} stroke="#22c55e" strokeWidth={1.5} strokeOpacity={0.85} />
+                <line
+                  x1={cx + cw}
+                  x2={cx + cw}
+                  y1={0}
+                  y2={height}
+                  stroke="#22c55e"
+                  strokeWidth={1.5}
+                  strokeOpacity={0.85}
+                />
+              </g>
+            );
+          })}
 
           {/* Selected segment tint */}
           <rect
