@@ -264,6 +264,11 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
 
   async function handleGenerateProxy() {
     if (!project) return;
+    // Re-anchor the prep progress bar so it starts fresh from 0% for the
+    // manual run instead of sitting at the asymptotic 95% leftover from
+    // the original auto-prep attempt.
+    prepStartedAt.current = null;
+    setPrepProgress(0);
     setGeneratingProxy(true);
     try {
       const res = await fetch(`/api/projects/${id}/proxy`, { method: "POST" });
@@ -296,6 +301,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   }
 
   async function handleGenerateWaveform() {
+    prepStartedAt.current = null;
+    setPrepProgress(0);
     setGeneratingWaveform(true);
     try {
       const res = await fetch(`/api/projects/${id}/waveform`, { method: "POST" });
@@ -501,7 +508,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         </div>
       )}
 
-      {project && prepPending && !pollExhausted && (
+      {project && prepPending && (!pollExhausted || generatingProxy || generatingWaveform) && (
         <div className="shrink-0 px-4 py-2 bg-yellow-900/20 border-b border-yellow-800/40 text-xs text-yellow-200">
           <div className="flex items-center gap-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400 shrink-0" />
@@ -529,7 +536,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         </div>
       )}
 
-      {project && (peaks.length === 0 || !hasProxy) && pollExhausted && (
+      {project && prepPending && pollExhausted && !generatingProxy && !generatingWaveform && (
         <div className="shrink-0 px-4 py-2 bg-orange-900/30 border-b border-orange-800/60 flex items-center gap-2 text-xs text-orange-200">
           <span className="flex-1">
             Auto-prep didn&apos;t finish on its own. Use the
