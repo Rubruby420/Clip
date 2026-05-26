@@ -1,28 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getDownloadPresignedUrl, uploadBuffer } from "@/lib/r2";
 import { transcribeAudio, sliceWords } from "@/lib/whisper";
 import { detectHighlights, type Highlight } from "@/lib/assemblyai";
 import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
 import { evaluateClip } from "@/lib/coach";
 import { extractAudio, extractThumbnail, generatePreviewProxy, getVideoDuration, tmpPath } from "@/lib/ffmpeg";
 import { generatePeaks } from "@/lib/waveform";
+import {
+  resolveStorage,
+  ensureDirFor,
+  projectProxyPath,
+  clipThumbPath,
+} from "@/lib/storage";
 import fs from "fs";
-import https from "https";
-import http from "http";
+import fsp from "fs/promises";
 import { randomUUID } from "crypto";
-
-async function downloadFile(url: string, dest: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    const client = url.startsWith("https") ? https : http;
-    client.get(url, (res) => {
-      res.pipe(file);
-      file.on("finish", () => file.close(() => resolve()));
-      file.on("error", reject);
-    }).on("error", reject);
-  });
-}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -51,14 +43,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Run async — don't await so we return immediately
   (async () => {
-    const videoPath = tmpPath(`${id}.mp4`);
+    // Source video already lives on disk at <STORAGE>/<id>/source.<ext> —
+    // no download step needed. Audio + proxy are intermediates in .tmp/
+    // (the proxy gets moved into the project folder on success).
+    const videoPath = resolveStorage(project.originalUrl);
     const audioPath = tmpPath(`${id}.mp3`);
     const proxyPath = tmpPath(`${id}_proxy.mp4`);
 
     try {
-      // 1. Download video from R2
-      const downloadUrl = await getDownloadPresignedUrl(project.originalKey);
-      await downloadFile(downloadUrl, videoPath);
 
       // 1a. Probe the source duration up front so the /source editor can
       //     mount the timeline and player correctly without waiting on the
@@ -99,12 +91,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       try {
         await generatePreviewProxy(videoPath, proxyPath);
         if (fs.existsSync(proxyPath)) {
-          const proxyBuffer = fs.readFileSync(proxyPath);
-          const proxyKey = `proxies/${id}.mp4`;
-          const proxyUrl = await uploadBuffer(proxyKey, proxyBuffer, "video/mp4");
+          const proxyRel = projectProxyPath(id);
+          const proxyAbs = resolveStorage(proxyRel);
+          await ensureDirFor(proxyAbs);
+          await fsp.copyFile(proxyPath, proxyAbs);
           await db.project.update({
             where: { id },
-            data: { proxyUrl, proxyKey },
+            data: { proxyUrl: proxyRel, proxyKey: proxyRel },
           });
         }
       } catch (err) {
@@ -133,9 +126,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Detect highlights — AssemblyAI chapters first, then LLM transcript
       // analysis as a fallback so clips always get real, specific titles.
+      // Pass the local audio path; the SDK uploads to AssemblyAI's
+      // /upload endpoint since our storage is local-only.
       let highlights: Highlight[] = [];
       try {
-        highlights = await detectHighlights(downloadUrl);
+        highlights = await detectHighlights(audioPath);
       } catch (err) {
         console.error("AssemblyAI highlight detection failed:", err);
       }
@@ -186,16 +181,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           }
         }
 
-        const thumbPath = tmpPath(`${clipId}_thumb.jpg`);
-        await extractThumbnail(videoPath, thumbPath, clipStart + 1).catch(() => null);
-
-        let thumbnailUrl = "";
-        if (fs.existsSync(thumbPath)) {
-          const thumbBuffer = fs.readFileSync(thumbPath);
-          const thumbKey = `thumbnails/${clipId}.jpg`;
-          thumbnailUrl = await uploadBuffer(thumbKey, thumbBuffer, "image/jpeg");
-          fs.unlinkSync(thumbPath);
-        }
+        const thumbRel = clipThumbPath(id, clipId);
+        const thumbAbs = resolveStorage(thumbRel);
+        await ensureDirFor(thumbAbs);
+        await extractThumbnail(videoPath, thumbAbs, clipStart + 1).catch(() => null);
+        const thumbnailUrl = fs.existsSync(thumbAbs) ? thumbRel : "";
 
         const words = sliceWords(transcription.words, clipStart, clipEnd);
 
@@ -232,7 +222,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       console.error("Processing error:", err);
       await db.project.update({ where: { id }, data: { status: "error" } }).catch(() => null);
     } finally {
-      [videoPath, audioPath, proxyPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+      // videoPath is the real source file in D:/clip — leave it alone.
+      // Only the .tmp/ intermediates get cleaned up.
+      [audioPath, proxyPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
     }
   })();
 

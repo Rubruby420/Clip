@@ -10,9 +10,13 @@ export interface Highlight {
   summary: string;
 }
 
-export async function detectHighlights(audioUrl: string): Promise<Highlight[]> {
+/** `audio` may be a public URL or a local file path. When a local path is
+ *  given, the SDK uploads the bytes to AssemblyAI's /upload endpoint first
+ *  and uses the returned URL — exactly what we want now that storage is
+ *  local and AssemblyAI's servers can't reach us. */
+export async function detectHighlights(audio: string): Promise<Highlight[]> {
   const transcript = await client.transcripts.transcribe({
-    audio_url: audioUrl,
+    audio,
     auto_chapters: true,
     sentiment_analysis: true,
   });
