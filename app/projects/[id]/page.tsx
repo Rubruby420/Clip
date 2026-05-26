@@ -5,6 +5,7 @@ import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
+import { fileUrl, downloadUrl } from "@/lib/storage";
 
 interface Clip {
   id: string; title: string; startTime: number; endTime: number;
@@ -160,7 +161,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     {/* Thumbnail */}
                     <div className="relative aspect-video bg-surface-700 overflow-hidden">
                       {clip.thumbnailUrl ? (
-                        <img src={clip.thumbnailUrl} alt={clip.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                        <img src={fileUrl(clip.thumbnailUrl)} alt={clip.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
                           <Film className="w-8 h-8 text-surface-500" />
@@ -203,7 +204,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                         </Link>
                         {clip.exportUrl && (
                           <a
-                            href={clip.exportUrl}
+                            href={downloadUrl(clip.exportUrl, `${clip.title}.mp4`)}
                             download
                             className="px-3 py-2 bg-green-700 hover:bg-green-600 text-white text-xs rounded-lg font-medium transition-colors"
                           >

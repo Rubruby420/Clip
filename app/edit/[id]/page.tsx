@@ -7,6 +7,7 @@ import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
 import { type LayoutConfig, DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
+import { fileUrl } from "@/lib/storage";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface Clip {
@@ -54,7 +55,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       const projRes = await fetch(`/api/projects/${c.projectId}`);
       if (projRes.ok) {
         const { project } = await projRes.json();
-        setVideoSrc(project.proxyUrl || project.originalUrl);
+        setVideoSrc(fileUrl(project.proxyUrl || project.originalUrl));
         setHasProxy(Boolean(project.proxyUrl));
         if (project.waveform) {
           try { setPeaks(JSON.parse(project.waveform)); } catch {}
@@ -106,7 +107,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       const res = await fetch(`/api/projects/${clip.projectId}/proxy`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.project?.proxyUrl) {
-        setVideoSrc(data.project.proxyUrl);
+        setVideoSrc(fileUrl(data.project.proxyUrl));
         setHasProxy(true);
       } else {
         alert(data.error || "Couldn't generate the preview.");

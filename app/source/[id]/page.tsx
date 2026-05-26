@@ -12,6 +12,7 @@ import { DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG } from "@/lib/captions";
 import { formatDuration } from "@/lib/utils";
 import { detectTalkSegments } from "@/lib/silence";
+import { fileUrl } from "@/lib/storage";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface SavedClip {
@@ -86,11 +87,11 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     // First load adopts whatever's best. After that we never auto-swap
     // — swapping src remounts <video> and resets playback. A proxy
     // upgrade is offered via pendingProxyUrl + an explicit upgrade button.
-    setVideoSrc((prev) => prev || p.proxyUrl || p.originalUrl);
+    setVideoSrc((prev) => prev || fileUrl(p.proxyUrl || p.originalUrl));
     // If the proxy just landed but we're still on the originalUrl,
     // surface it as a pending upgrade. Cleared once we adopt it.
     if (p.proxyUrl) {
-      setPendingProxyUrl((prev) => prev ?? p.proxyUrl);
+      setPendingProxyUrl((prev) => prev ?? fileUrl(p.proxyUrl));
     }
     setHasProxy((prev) => prev || Boolean(p.proxyUrl));
     const dur = p.duration ?? 0;
@@ -277,7 +278,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         // User explicitly asked for the smoother preview — swap now and
         // accept the playback reset. They clicked the button knowing what
         // they were getting.
-        setVideoSrc(data.project.proxyUrl);
+        setVideoSrc(fileUrl(data.project.proxyUrl));
         setHasProxy(true);
         setPendingProxyUrl(null);
       } else {

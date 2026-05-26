@@ -5,6 +5,7 @@ import {
   BookOpen, Loader2, Wand2, RefreshCw, AlertCircle,
   Scissors, Volume2, Download, Check, Quote, Bell, Clapperboard,
 } from "lucide-react";
+import { fileUrl, downloadUrl } from "@/lib/storage";
 
 type BeatSource = "original" | "bridge" | "new";
 
@@ -276,9 +277,9 @@ export default function StoryPanel({ clipId, onApplyRecut }: Props) {
             </button>
             {voiceUrl && (
               <div className="space-y-1.5">
-                <audio controls src={voiceUrl} className="w-full h-8" />
+                <audio controls src={fileUrl(voiceUrl)} className="w-full h-8" />
                 <a
-                  href={voiceUrl}
+                  href={downloadUrl(voiceUrl, "voiceover.mp3")}
                   download
                   className="flex items-center justify-center gap-1 text-[11px] text-brand-300 hover:text-brand-200"
                 >

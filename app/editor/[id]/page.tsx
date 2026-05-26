@@ -14,6 +14,7 @@ import CaptionPanel from "@/components/editor/CaptionPanel";
 import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
+import { fileUrl, downloadUrl } from "@/lib/storage";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface Clip {
@@ -89,11 +90,11 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
 
       // Get project to get video URL. Prefer the 720p proxy when ready —
       // it keeps the editor preview smooth on 4K sources. The export route
-      // still reads the original from R2 so finals stay full-res.
+      // still reads the original from disk so finals stay full-res.
       const projRes = await fetch(`/api/projects/${c.projectId}`);
       if (projRes.ok) {
         const { project } = await projRes.json();
-        setVideoSrc(project.proxyUrl || project.originalUrl);
+        setVideoSrc(fileUrl(project.proxyUrl || project.originalUrl));
         setHasProxy(Boolean(project.proxyUrl));
       }
       setLoading(false);
@@ -192,11 +193,12 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     setExporting(false);
   }
 
-  // Same-origin route that 302s to a presigned R2 URL with
-  // Content-Disposition: attachment, so the browser saves the file directly.
+  // Same-origin /api/files route with ?download=<name> sets
+  // Content-Disposition: attachment, so the browser saves the file.
   function handleDownload() {
+    if (!exportUrl || !clip) return;
     const a = document.createElement("a");
-    a.href = `/api/export/${id}/download`;
+    a.href = downloadUrl(exportUrl, `${clip.title}.mp4`);
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
@@ -233,7 +235,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
       const res = await fetch(`/api/projects/${clip.projectId}/proxy`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.project?.proxyUrl) {
-        setVideoSrc(data.project.proxyUrl);
+        setVideoSrc(fileUrl(data.project.proxyUrl));
         setHasProxy(true);
       } else {
         alert(data.error || "Couldn't generate the preview. Falling back to the original.");

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Upload, Film, Clock, Trash2, Edit3, Plus, Loader2, CheckCircle, AlertCircle, Zap } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
+import { fileUrl } from "@/lib/storage";
 
 interface ProjectClip { id: string; score: number | null; thumbnailUrl: string | null; }
 interface Project {
@@ -113,7 +114,7 @@ export default function Dashboard() {
                     {/* Thumbnail */}
                     <div className="relative aspect-video bg-surface-700 overflow-hidden">
                       {thumb ? (
-                        <img src={thumb} alt={project.title} className="w-full h-full object-cover" />
+                        <img src={fileUrl(thumb)} alt={project.title} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
                           <Film className="w-10 h-10 text-surface-500" />
