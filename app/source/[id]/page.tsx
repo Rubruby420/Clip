@@ -467,27 +467,43 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         </aside>
 
         <main className="flex-1 flex flex-col items-center justify-center p-6 overflow-auto bg-surface-900">
-          <div className="w-full max-w-xs">
-            {videoSrc && duration > 0 ? (
-              <CanvasPreview
-                videoSrc={videoSrc}
-                words={words}
-                currentTime={currentTime}
-                onTimeUpdate={(t) => setCurrentTime(t)}
-                onLoadedMetadata={(d) => {
-                  // Only adopt the metadata duration if the project didn't
-                  // already report one — keeps the timeline width stable.
-                  if (duration === 0) {
-                    setDuration(d);
-                    setOutTime(d);
-                  }
-                }}
-                captionConfig={DEFAULT_CAPTION_CONFIG}
-                captionsEnabled
-                layout={DEFAULT_LAYOUT}
-                startTime={0}
-                endTime={duration}
-              />
+          <div className="w-full max-w-xs relative">
+            {videoSrc ? (
+              <>
+                {/*
+                  Mount CanvasPreview as soon as we have a src — gating on
+                  duration > 0 used to deadlock manual-mode projects, since
+                  /api/process only writes Project.duration in AI mode.
+                  Without the <video> element mounted, onLoadedMetadata
+                  can never fire and the page sits on "Loading the video
+                  player…" forever.
+                */}
+                <CanvasPreview
+                  videoSrc={videoSrc}
+                  words={words}
+                  currentTime={currentTime}
+                  onTimeUpdate={(t) => setCurrentTime(t)}
+                  onLoadedMetadata={(d) => {
+                    if (duration === 0) {
+                      setDuration(d);
+                      setOutTime(d);
+                    }
+                  }}
+                  captionConfig={DEFAULT_CAPTION_CONFIG}
+                  captionsEnabled
+                  layout={DEFAULT_LAYOUT}
+                  startTime={0}
+                  endTime={duration || 0}
+                />
+                {duration === 0 && (
+                  <div className="absolute inset-0 rounded-xl bg-surface-900/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 px-6 text-center pointer-events-none">
+                    <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
+                    <p className="text-xs text-surface-300 leading-relaxed">
+                      Buffering the source so the player can start…
+                    </p>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="aspect-[9/16] bg-surface-800 rounded-xl flex flex-col items-center justify-center gap-3 px-6 text-center">
                 <Loader2 className="w-6 h-6 animate-spin text-brand-400" />

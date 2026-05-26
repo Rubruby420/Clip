@@ -5,7 +5,7 @@ import { transcribeAudio, sliceWords } from "@/lib/whisper";
 import { detectHighlights, type Highlight } from "@/lib/assemblyai";
 import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
 import { evaluateClip } from "@/lib/coach";
-import { extractAudio, extractThumbnail, generatePreviewProxy, tmpPath } from "@/lib/ffmpeg";
+import { extractAudio, extractThumbnail, generatePreviewProxy, getVideoDuration, tmpPath } from "@/lib/ffmpeg";
 import { generatePeaks } from "@/lib/waveform";
 import fs from "fs";
 import https from "https";
@@ -59,6 +59,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // 1. Download video from R2
       const downloadUrl = await getDownloadPresignedUrl(project.originalKey);
       await downloadFile(downloadUrl, videoPath);
+
+      // 1a. Probe the source duration up front so the /source editor can
+      //     mount the timeline and player correctly without waiting on the
+      //     video element's loadedmetadata. AI mode overwrites this later
+      //     with the Whisper-reported duration (they agree to within a
+      //     frame). Non-fatal — if probe fails, the player still works
+      //     once <video> loads its own metadata.
+      try {
+        const probed = await getVideoDuration(videoPath);
+        if (probed > 0) {
+          await db.project.update({ where: { id }, data: { duration: probed } });
+        }
+      } catch (err) {
+        console.error("Source duration probe failed (non-fatal):", err);
+      }
 
       // 2. Extract audio
       await extractAudio(videoPath, audioPath);

@@ -1,4 +1,4 @@
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
@@ -61,14 +61,24 @@ export async function extractThumbnail(
   );
 }
 
+// Probe a video's duration in seconds. Uses spawn + manual stderr parse so
+// this works on Windows (the previous shell-piped grep/awk version exec'd
+// through cmd.exe and silently returned 0).
 export async function getVideoDuration(videoPath: string): Promise<number> {
-  const bin = ffmpegBin();
-  const { stdout } = await execAsync(
-    `"${bin}" -i "${videoPath}" 2>&1 | grep Duration | awk '{print $2}' | tr -d ,`
-  );
-  const parts = stdout.trim().split(":");
-  if (parts.length !== 3) return 0;
-  return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegBin(), ["-i", videoPath]);
+    let stderr = "";
+    proc.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    proc.on("error", () => resolve(0));
+    proc.on("close", () => {
+      const m = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (!m) return resolve(0);
+      const h = parseInt(m[1], 10);
+      const mn = parseInt(m[2], 10);
+      const s = parseFloat(m[3]);
+      resolve(h * 3600 + mn * 60 + s);
+    });
+  });
 }
 
 export interface ExportOptions {
