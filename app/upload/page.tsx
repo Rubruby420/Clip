@@ -8,92 +8,37 @@ import { formatFileSize } from "@/lib/utils";
 
 type UploadPhase = "idle" | "uploading" | "uploaded" | "error";
 
-// 25 MiB chunks — above R2's 5 MiB minimum, ~200 parts for a 5 GB file.
-// We dropped from 95 MiB because 4 × 95 MiB in flight (~380 MiB) was
-// stressing browser memory near the end of multi-GB uploads, causing
-// chunks past 4 GB to silently fail their body stream. 25 MiB keeps the
-// in-flight working set under ~100 MiB and retries are faster too.
-const CHUNK_SIZE = 25 * 1024 * 1024;
-const CONCURRENCY = 4;
-
-interface UploadedPart {
-  partNumber: number;
-  etag: string;
-}
-
-/** PUT a single chunk to its presigned R2 URL, reporting bytes loaded.
- * Single attempt — wrap in `putPartWithRetry` to survive transient
- * network blips on long uploads. */
-function putPart(
-  url: string,
-  chunk: Blob,
-  onProgress: (loaded: number) => void
-): Promise<string> {
+/** Single streaming PUT to /api/upload. Returns the new projectId. */
+function uploadFile(
+  file: File,
+  title: string,
+  onProgress: (loaded: number, total: number) => void
+): Promise<{ projectId: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+    const qs = new URLSearchParams({ ext, title });
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded);
+      if (e.lengthComputable) onProgress(e.loaded, e.total);
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        const etag = xhr.getResponseHeader("ETag");
-        if (etag) resolve(etag);
-        else reject(new Error(`R2 returned ${xhr.status} but no ETag — check the bucket's CORS ExposeHeaders includes "ETag".`));
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { reject(new Error("Server returned invalid JSON")); }
       } else {
-        reject(new Error(`Chunk upload failed: R2 returned HTTP ${xhr.status} ${xhr.statusText || ""}`.trim()));
+        let msg = `Upload failed (HTTP ${xhr.status})`;
+        try { msg = JSON.parse(xhr.responseText).error ?? msg; } catch {}
+        reject(new Error(msg));
       }
     };
-    // `xhr.onerror` fires for ANY low-level failure — CORS rejection,
-    // DNS error, TCP reset, browser-side connection drop. The browser
-    // hides the reason for security, so we report a generic message and
-    // rely on the retry loop to absorb transient drops.
-    xhr.onerror = () => reject(new Error("network_error"));
-    xhr.ontimeout = () => reject(new Error("network_timeout"));
-    xhr.open("PUT", url);
-    xhr.send(chunk);
+    xhr.onerror = () => reject(new Error(
+      "Upload failed mid-stream. If the file is in a OneDrive folder, " +
+      "OneDrive may have touched it — move it to D:\\ or C:\\Users\\tania\\Videos\\ and try again."
+    ));
+    xhr.open("PUT", `/api/upload?${qs.toString()}`);
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.send(file);
   });
-}
-
-/** Up to 3 attempts per chunk with exponential backoff. A 5 GB / 54-chunk
- *  upload over a flaky connection will almost always lose one chunk;
- *  this prevents the whole upload from aborting on a single drop. */
-async function putPartWithRetry(
-  url: string,
-  chunk: Blob,
-  partNumber: number,
-  onProgress: (loaded: number) => void
-): Promise<string> {
-  const MAX_ATTEMPTS = 3;
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      return await putPart(url, chunk, onProgress);
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      // Transient: retry. Auth/CORS rejection (4xx) won't get better —
-      // bail immediately so the user sees the real cause.
-      const transient = msg === "network_error" || msg === "network_timeout" || /HTTP 5\d\d/.test(msg);
-      if (!transient || attempt === MAX_ATTEMPTS) break;
-      // Reset progress for this chunk so the bar doesn't double-count
-      // the previous failed attempt.
-      onProgress(0);
-      await new Promise((r) => setTimeout(r, 1000 * attempt));
-    }
-  }
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  if (msg === "network_error") {
-    throw new Error(
-      `Chunk ${partNumber} failed after 3 attempts. Earlier chunks succeeded, so this isn't CORS or auth — ` +
-      `most likely the source file is in a OneDrive folder and OneDrive touched it mid-upload, breaking the read stream. ` +
-      `Move the video to a non-synced folder (e.g. C:\\Users\\tania\\Videos\\) and try again. ` +
-      `If it still fails, open DevTools → Network for the real error.`
-    );
-  }
-  if (msg === "network_timeout") {
-    throw new Error(`Chunk ${partNumber} timed out after 3 attempts. Try again on a faster connection.`);
-  }
-  throw new Error(`Chunk ${partNumber}: ${msg}`);
 }
 
 export default function UploadPage() {
@@ -137,65 +82,15 @@ export default function UploadPage() {
     setStatusText("Preparing upload…");
 
     try {
-      const partCount = Math.ceil(file.size / CHUNK_SIZE);
-
-      // 1. Start the multipart upload, get presigned URLs for every chunk
-      const startRes = await fetch("/api/upload/multipart/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: file.name,
-          contentType: file.type,
-          title: file.name.replace(/\.[^/.]+$/, ""),
-          partCount,
-        }),
-      });
-      const startData = await startRes.json();
-      if (!startRes.ok) throw new Error(startData.error ?? "Failed to start upload");
-      const { projectId, key, uploadId, partUrls } = startData;
-
-      // 2. Upload all chunks directly to R2, with limited concurrency
-      const loaded = new Array<number>(partCount).fill(0);
-      const parts = new Array<UploadedPart>(partCount);
-
-      const report = () => {
-        const total = loaded.reduce((a, b) => a + b, 0);
-        setProgress(Math.min(99, Math.round((total / file.size) * 100)));
-      };
-
-      let nextIndex = 0;
-      async function worker() {
-        while (nextIndex < partCount) {
-          const i = nextIndex++;
-          const start = i * CHUNK_SIZE;
-          const chunk = file!.slice(start, Math.min(start + CHUNK_SIZE, file!.size));
-          const etag = await putPartWithRetry(
-            partUrls[i],
-            chunk,
-            i + 1,
-            (b) => { loaded[i] = b; report(); },
-          );
-          loaded[i] = chunk.size;
-          report();
-          parts[i] = { partNumber: i + 1, etag };
-        }
-      }
-
-      setStatusText(`Uploading ${partCount} chunk${partCount > 1 ? "s" : ""} to cloud storage…`);
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, partCount) }, worker));
-
-      // 3. Finalise the upload
-      setStatusText("Finalising upload…");
-      setProgress(100);
-      const completeRes = await fetch("/api/upload/multipart/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, key, uploadId, parts }),
-      });
-      const completeData = await completeRes.json();
-      if (!completeRes.ok) throw new Error(completeData.error ?? "Failed to finalise upload");
+      setStatusText("Uploading to local storage…");
+      const { projectId } = await uploadFile(
+        file,
+        file.name.replace(/\.[^/.]+$/, ""),
+        (loaded, total) => setProgress(Math.min(99, Math.round((loaded / total) * 100))),
+      );
 
       setStatusText(mode === "manual" ? "Upload complete! Preparing source…" : "Upload complete! Starting AI…");
+      setProgress(100);
       setPhase("uploaded");
 
       await fetch(`/api/process/${projectId}`, {
