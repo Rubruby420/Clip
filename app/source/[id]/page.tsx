@@ -55,23 +55,35 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
 
   // Apply a fresh project payload to local state. Hoisted so the initial
   // load and the prep-poll loop both reuse it.
+  //
+  // IMPORTANT: this runs on every poll tick, so it MUST be idempotent — never
+  // re-set fields that are already populated locally. Re-setting `videoSrc`
+  // remounts the <video> element (kills playback + re-buffers the proxy);
+  // re-setting `peaks` re-parses a large JSON array on every tick and makes
+  // the timeline flicker. Local state wins once a field is populated.
   function applyProject(p: ProjectSummary) {
     setProject(p);
-    setVideoSrc(p.proxyUrl || p.originalUrl);
-    setHasProxy(Boolean(p.proxyUrl));
+    setVideoSrc((prev) => prev || p.proxyUrl || p.originalUrl);
+    setHasProxy((prev) => prev || Boolean(p.proxyUrl));
     const dur = p.duration ?? 0;
     if (dur > 0) {
       setDuration((prev) => (prev === 0 ? dur : prev));
       setOutTime((prev) => (prev === 0 ? dur : prev));
     }
     if (p.waveform) {
-      try { setPeaks(JSON.parse(p.waveform)); } catch {}
+      setPeaks((prev) => {
+        if (prev.length > 0) return prev;
+        try { return JSON.parse(p.waveform!); } catch { return prev; }
+      });
     }
     if (p.transcription) {
-      try {
-        const t = JSON.parse(p.transcription) as Transcription;
-        if (Array.isArray(t.words)) setWords(t.words);
-      } catch {}
+      setWords((prev) => {
+        if (prev.length > 0) return prev;
+        try {
+          const t = JSON.parse(p.transcription!) as Transcription;
+          return Array.isArray(t.words) ? t.words : prev;
+        } catch { return prev; }
+      });
     }
   }
 
@@ -92,9 +104,15 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // the background after upload; this page might load before proxy +
   // waveform exist. Re-fetch every 3s until both are present, capped at
   // ~3 min so a broken pipeline doesn't hammer the route forever.
+  //
+  // Paused while a manual generate button is in flight — the proxy POST
+  // takes ~3 min on a long Source and the poll would otherwise race the
+  // button's own state writes, causing a flicker and (when applyProject
+  // was non-idempotent) restarting video playback.
   const pollAttempts = useRef(0);
   useEffect(() => {
     if (hasProxy && peaks.length > 0) return;
+    if (generatingProxy || generatingWaveform) return;
     pollAttempts.current = 0;
     const interval = setInterval(async () => {
       pollAttempts.current += 1;
@@ -109,7 +127,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     }, 3000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, hasProxy, peaks.length]);
+  }, [id, hasProxy, peaks.length, generatingProxy, generatingWaveform]);
 
   async function handleGenerateProxy() {
     if (!project) return;
