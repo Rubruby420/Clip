@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Scissors } from "lucide-react";
+import { Scissors, Ban, Undo2 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 
 interface SavedClipRange {
   id: string;
   startTime: number;
   endTime: number;
+  muted?: boolean;
 }
 
 interface Props {
@@ -27,6 +28,11 @@ interface Props {
   // the user can split the clip under it. Parent controls when this is
   // active (typically only when the playhead is inside a saved clip).
   onSplit?: () => void;
+  // Mute toggle. Same pattern as onSplit — parent passes it only when
+  // the playhead is inside a saved clip. `playheadClipMuted` toggles
+  // the icon (Ban vs Undo2) and tooltip text.
+  onToggleMute?: () => void;
+  playheadClipMuted?: boolean;
 }
 
 type DragMode = "start" | "end" | "playhead" | null;
@@ -37,6 +43,7 @@ type DragMode = "start" | "end" | "playhead" | null;
 export default function WaveformTimeline({
   peaks, duration, startTime, endTime, currentTime,
   onStartChange, onEndChange, onSeek, savedClips = [], onSplit,
+  onToggleMute, playheadClipMuted = false,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -199,12 +206,17 @@ export default function WaveformTimeline({
               shared with another clip (i.e. razor splits) get a brighter,
               wider yellow accent so the split is unmistakable. The
               band itself is also inset by 1px on each side so adjacent
-              green tints don't fuse into a solid block. */}
+              green tints don't fuse into a solid block. Muted clips
+              render in grey with a horizontal strike-through so they
+              read as "this part has been removed from playback." */}
           {savedClips.map((c) => {
             const cx = tToX(c.startTime);
             const cw = Math.max(1, tToX(c.endTime) - cx);
             const startIsSplit = isSplitBoundaryT(c.startTime);
             const endIsSplit = isSplitBoundaryT(c.endTime);
+            const bandFill = c.muted ? "#6b7280" : "#22c55e";
+            const bandOpacity = c.muted ? 0.12 : 0.18;
+            const edgeColor = c.muted ? "#6b7280" : "#22c55e";
             return (
               <g key={c.id} pointerEvents="none">
                 <rect
@@ -212,26 +224,38 @@ export default function WaveformTimeline({
                   y={0}
                   width={Math.max(1, cw - 2)}
                   height={height}
-                  fill="#22c55e"
-                  fillOpacity={0.18}
+                  fill={bandFill}
+                  fillOpacity={bandOpacity}
                 />
+                {c.muted && (
+                  <line
+                    x1={cx + 1}
+                    x2={cx + cw - 1}
+                    y1={height / 2}
+                    y2={height / 2}
+                    stroke="#9ca3af"
+                    strokeWidth={2}
+                    strokeOpacity={0.85}
+                    strokeDasharray="4 3"
+                  />
+                )}
                 <line
                   x1={cx}
                   x2={cx}
                   y1={0}
                   y2={height}
-                  stroke={startIsSplit ? "#fef3c7" : "#22c55e"}
-                  strokeWidth={startIsSplit ? 3 : 1.5}
-                  strokeOpacity={startIsSplit ? 1 : 0.85}
+                  stroke={startIsSplit && !c.muted ? "#fef3c7" : edgeColor}
+                  strokeWidth={startIsSplit && !c.muted ? 3 : 1.5}
+                  strokeOpacity={startIsSplit && !c.muted ? 1 : 0.85}
                 />
                 <line
                   x1={cx + cw}
                   x2={cx + cw}
                   y1={0}
                   y2={height}
-                  stroke={endIsSplit ? "#fef3c7" : "#22c55e"}
-                  strokeWidth={endIsSplit ? 3 : 1.5}
-                  strokeOpacity={endIsSplit ? 1 : 0.85}
+                  stroke={endIsSplit && !c.muted ? "#fef3c7" : edgeColor}
+                  strokeWidth={endIsSplit && !c.muted ? 3 : 1.5}
+                  strokeOpacity={endIsSplit && !c.muted ? 1 : 0.85}
                 />
               </g>
             );
@@ -308,6 +332,28 @@ export default function WaveformTimeline({
             style={{ left: playheadX + 8 }}
           >
             <Scissors className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Mute toggle button — sits to the right of the scissors.
+            Same stopPropagation treatment for the same reason. Icon
+            and tooltip flip based on the current muted state of the
+            clip under the playhead. */}
+        {onToggleMute && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onToggleMute(); }}
+            title={playheadClipMuted ? "Un-mute segment" : "Mute segment (skip during playback)"}
+            className={`absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md shadow-lg ring-1 ring-black/40 transition-colors text-white ${
+              playheadClipMuted
+                ? "bg-amber-600 hover:bg-amber-500"
+                : "bg-surface-700 hover:bg-surface-600"
+            }`}
+            style={{ left: playheadX + 36 }}
+          >
+            {playheadClipMuted ? <Undo2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
           </button>
         )}
       </div>

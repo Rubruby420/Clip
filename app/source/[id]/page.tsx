@@ -17,6 +17,7 @@ import { fileUrl } from "@/lib/file-urls";
 interface WordTimestamp { word: string; start: number; end: number; }
 interface SavedClip {
   id: string; title: string; startTime: number; endTime: number;
+  muted: boolean;
 }
 interface Transcription {
   text: string; words: WordTimestamp[]; duration: number;
@@ -320,10 +321,51 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   }
 
   // The saved clip (if any) that contains the current playhead. Drives
-  // whether the razor button shows up on the waveform and what it splits.
+  // whether the razor + mute buttons show up on the waveform and what
+  // they target.
   const clipAtPlayhead = project?.clips.find(
     (c) => currentTime > c.startTime && currentTime < c.endTime,
   );
+
+  // Ranges the source-editor preview should skip during playback —
+  // every clip the user has marked as muted. Re-derived on every
+  // render so toggle-mute is reflected immediately.
+  const mutedRanges = (project?.clips ?? [])
+    .filter((c) => c.muted)
+    .map((c) => ({ start: c.startTime, end: c.endTime }));
+
+  async function handleToggleMute() {
+    if (!clipAtPlayhead) return;
+    const next = !clipAtPlayhead.muted;
+    // Optimistic update so the band re-renders instantly.
+    setProject((prev) => prev
+      ? {
+          ...prev,
+          clips: prev.clips.map((c) =>
+            c.id === clipAtPlayhead.id ? { ...c, muted: next } : c,
+          ),
+        }
+      : prev);
+    try {
+      const res = await fetch(`/api/clips/${clipAtPlayhead.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ muted: next }),
+      });
+      if (!res.ok) throw new Error("PATCH failed");
+    } catch {
+      // Roll back the optimistic update if the server didn't accept it.
+      setProject((prev) => prev
+        ? {
+            ...prev,
+            clips: prev.clips.map((c) =>
+              c.id === clipAtPlayhead.id ? { ...c, muted: !next } : c,
+            ),
+          }
+        : prev);
+      alert("Couldn't toggle mute — check your connection.");
+    }
+  }
 
   async function handleSplit() {
     if (!clipAtPlayhead) return;
@@ -647,6 +689,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                   layout={DEFAULT_LAYOUT}
                   startTime={0}
                   endTime={duration || 0}
+                  skipRanges={mutedRanges}
                 />
                 {duration === 0 && (
                   <div className="absolute inset-0 rounded-xl bg-surface-900/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 px-6 text-center pointer-events-none">
@@ -684,6 +727,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           onSeek={(t) => setCurrentTime(t)}
           savedClips={project?.clips ?? []}
           onSplit={clipAtPlayhead ? handleSplit : undefined}
+          onToggleMute={clipAtPlayhead ? handleToggleMute : undefined}
+          playheadClipMuted={clipAtPlayhead?.muted ?? false}
         />
       </div>
 

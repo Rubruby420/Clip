@@ -19,6 +19,11 @@ interface Props {
   layout: LayoutConfig;
   startTime: number;
   endTime: number;
+  // Source-editor muting: time ranges (in source-video seconds) the
+  // player should jump past on `timeupdate`. When playback enters one
+  // of these ranges, the video element seeks to the range's end+epsilon
+  // and continues from there. Undefined / empty = play through everything.
+  skipRanges?: { start: number; end: number }[];
 }
 
 function getAspectClass(ratio: string) {
@@ -80,7 +85,7 @@ function CaptionOverlay({ words, currentTime, config, enabled }: {
 
 const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   videoSrc, words, currentTime, onTimeUpdate, onLoadedMetadata,
-  captionConfig, captionsEnabled, layout, startTime, endTime,
+  captionConfig, captionsEnabled, layout, startTime, endTime, skipRanges,
 }, ref) => {
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
@@ -240,6 +245,17 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         onClick={togglePlay}
         onTimeUpdate={(e) => {
           const t = e.currentTarget.currentTime;
+          // Skip past any muted range the playhead has entered. Done
+          // before notifying the parent so the parent never sees a
+          // currentTime inside a muted range — the seek is essentially
+          // invisible from outside.
+          if (skipRanges && skipRanges.length > 0) {
+            const hit = skipRanges.find((r) => t >= r.start && t < r.end);
+            if (hit) {
+              e.currentTarget.currentTime = hit.end + 0.01;
+              return;
+            }
+          }
           onTimeUpdate(t);
           if (t >= endTime) e.currentTarget.pause();
         }}
