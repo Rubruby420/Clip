@@ -19,6 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => ({}));
   const startTime = Number(body.startTime);
   const endTime = Number(body.endTime);
+  const muted = body.muted === true;
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) {
     return NextResponse.json({ error: "Invalid startTime/endTime" }, { status: 400 });
   }
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       endTime,
       score: null,
       words: JSON.stringify(words),
+      muted,
     },
   });
 

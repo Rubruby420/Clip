@@ -25,9 +25,13 @@ interface Props {
   // overlay.
   savedClips?: SavedClipRange[];
   // Razor button. When provided, a scissors icon rides the playhead so
-  // the user can split the clip under it. Parent controls when this is
-  // active (typically only when the playhead is inside a saved clip).
+  // the user can split the clip under it. Parent controls behaviour:
+  // in `/source`, scissors splits inside a saved clip and inserts a
+  // muted segment when clicked in the grey unsaved area — the
+  // splitTooltip prop lets the parent tell the user which mode they're
+  // about to trigger.
   onSplit?: () => void;
+  splitTooltip?: string;
   // Mute toggle. Same pattern as onSplit — parent passes it only when
   // the playhead is inside a saved clip. `playheadClipMuted` toggles
   // the icon (Ban vs Undo2) and tooltip text.
@@ -43,6 +47,7 @@ type DragMode = "start" | "end" | "playhead" | null;
 export default function WaveformTimeline({
   peaks, duration, startTime, endTime, currentTime,
   onStartChange, onEndChange, onSeek, savedClips = [], onSplit,
+  splitTooltip = "Split clip at playhead",
   onToggleMute, playheadClipMuted = false,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -327,7 +332,7 @@ export default function WaveformTimeline({
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onSplit(); }}
-            title="Split clip at playhead"
+            title={splitTooltip}
             className="absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md bg-brand-600 hover:bg-brand-500 text-white shadow-lg ring-1 ring-black/40 transition-colors"
             style={{ left: playheadX + 8 }}
           >
