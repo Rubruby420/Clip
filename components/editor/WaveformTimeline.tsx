@@ -37,6 +37,10 @@ interface Props {
   // the icon (Ban vs Undo2) and tooltip text.
   onToggleMute?: () => void;
   playheadClipMuted?: boolean;
+  // Two-click mute selection: when set, the parent is mid-selection and
+  // the waveform should draw a tentative marker at this time so the
+  // user knows the next scissors click will close the range.
+  pendingMuteStart?: number | null;
 }
 
 type DragMode = "start" | "end" | "playhead" | null;
@@ -49,6 +53,7 @@ export default function WaveformTimeline({
   onStartChange, onEndChange, onSeek, savedClips = [], onSplit,
   splitTooltip = "Split clip at playhead",
   onToggleMute, playheadClipMuted = false,
+  pendingMuteStart = null,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -276,6 +281,32 @@ export default function WaveformTimeline({
             fillOpacity={0.12}
             pointerEvents="none"
           />
+
+          {/* Tentative mute selection: dashed yellow line at the first
+              click, plus a translucent yellow band between it and the
+              current playhead so the user can see what's about to be
+              muted. Drawn before the playhead line so the playhead
+              stays visually on top. */}
+          {pendingMuteStart !== null && (() => {
+            const a = tToX(pendingMuteStart);
+            const b = playheadX;
+            const x = Math.min(a, b);
+            const w = Math.max(1, Math.abs(b - a));
+            return (
+              <g pointerEvents="none">
+                <rect x={x} y={0} width={w} height={height} fill="#fbbf24" fillOpacity={0.18} />
+                <line
+                  x1={a}
+                  x2={a}
+                  y1={0}
+                  y2={height}
+                  stroke="#fbbf24"
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
+                />
+              </g>
+            );
+          })()}
 
           {/* Playhead line */}
           <line

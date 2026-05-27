@@ -401,26 +401,47 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     }
   }
 
-  // Scissors in grey (unsaved) area: insert a 2s muted segment at the
-  // playhead. Capped at the start of the next saved clip so we never
-  // overlap an existing one. Each click adds another muted segment;
-  // adjacent ones merge visually since they're all greyed-out and the
-  // player skips through them in sequence.
-  async function handleMuteAtPlayhead() {
-    if (!project) return;
-    const sortedAfter = project.clips
-      .filter((c) => c.startTime > currentTime)
-      .sort((a, b) => a.startTime - b.startTime);
-    const nextBoundary = sortedAfter[0]?.startTime ?? duration;
-    const endAt = Math.min(currentTime + 2, nextBoundary);
-    // Don't create a sliver mute that's effectively invisible / useless.
-    if (endAt - currentTime < 0.4) return;
+  // Pending mute-region selection: first scissors click in grey
+  // captures the playhead time here; the next scissors click (anywhere)
+  // completes the selection and mutes [min, max]. null = no selection
+  // in progress.
+  const [pendingMuteStart, setPendingMuteStart] = useState<number | null>(null);
+
+  // Escape cancels an in-progress mute selection without affecting
+  // anything else. Skipping it if focus is in an input so the user can
+  // type Esc inside text fields without losing their work.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement | null)?.tagName ?? "";
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (pendingMuteStart !== null) {
+        e.preventDefault();
+        setPendingMuteStart(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingMuteStart]);
+
+  // Finalise a mute selection from the captured first-click time to the
+  // current playhead. The range is taken min→max so the user can mark
+  // either end first. Submitted via the standard clip-create endpoint
+  // with muted: true.
+  async function finishMuteSelection(from: number, to: number) {
+    const startAt = Math.min(from, to);
+    const endAt = Math.max(from, to);
+    if (endAt - startAt < 0.05) {
+      // Too narrow to mean anything — just clear the pending state.
+      setPendingMuteStart(null);
+      return;
+    }
     try {
       const res = await fetch(`/api/projects/${id}/clips`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startTime: currentTime,
+          startTime: startAt,
           endTime: endAt,
           muted: true,
           title: "Muted",
@@ -434,19 +455,27 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       setProject((prev) => prev
         ? { ...prev, clips: [...prev.clips, data.clip].sort((a, b) => a.startTime - b.startTime) }
         : prev);
-      // Step the playhead just past the mute so the next click extends
-      // the muted span instead of overlapping it.
-      setCurrentTime(() => Math.min(endAt + 0.01, Math.max(0, duration - 0.05)));
     } catch {
       alert("Couldn't mute the segment — check your connection.");
+    } finally {
+      setPendingMuteStart(null);
     }
   }
 
-  // Single scissors handler: split if the playhead is inside a saved
-  // clip, otherwise create a muted segment in the unsaved gap.
+  // Single scissors handler:
+  //   - Pending selection in progress? Close it at the current playhead.
+  //   - Playhead in a green clip and no pending? Split that clip.
+  //   - Playhead in grey and no pending? Start a mute selection.
   function handleScissors() {
-    if (clipAtPlayhead) return handleSplit();
-    return handleMuteAtPlayhead();
+    if (pendingMuteStart !== null) {
+      void finishMuteSelection(pendingMuteStart, currentTime);
+      return;
+    }
+    if (clipAtPlayhead) {
+      void handleSplit();
+      return;
+    }
+    setPendingMuteStart(currentTime);
   }
 
   async function handleSaveClip() {
@@ -775,7 +804,14 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           onSeek={(t) => setCurrentTime(t)}
           savedClips={project?.clips ?? []}
           onSplit={handleScissors}
-          splitTooltip={clipAtPlayhead ? "Split clip at playhead" : "Add 2s mute at playhead"}
+          splitTooltip={
+            pendingMuteStart !== null
+              ? "Click to end the mute here (Esc to cancel)"
+              : clipAtPlayhead
+                ? "Split clip at playhead"
+                : "Click to start a precise mute (then click again at the end)"
+          }
+          pendingMuteStart={pendingMuteStart}
           onToggleMute={clipAtPlayhead ? handleToggleMute : undefined}
           playheadClipMuted={clipAtPlayhead?.muted ?? false}
         />
