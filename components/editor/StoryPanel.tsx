@@ -5,7 +5,7 @@ import {
   BookOpen, Loader2, Wand2, RefreshCw, AlertCircle,
   Scissors, Volume2, Download, Check, Quote, Bell, Clapperboard,
 } from "lucide-react";
-import { fileUrl, downloadUrl } from "@/lib/storage";
+import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
 type BeatSource = "original" | "bridge" | "new";
 

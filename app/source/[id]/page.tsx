@@ -12,7 +12,7 @@ import { DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG } from "@/lib/captions";
 import { formatDuration } from "@/lib/utils";
 import { detectTalkSegments } from "@/lib/silence";
-import { fileUrl } from "@/lib/storage";
+import { fileUrl } from "@/lib/file-urls";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface SavedClip {

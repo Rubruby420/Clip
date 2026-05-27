@@ -14,7 +14,7 @@ import CaptionPanel from "@/components/editor/CaptionPanel";
 import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
-import { fileUrl, downloadUrl } from "@/lib/storage";
+import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface Clip {

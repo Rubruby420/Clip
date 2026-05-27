@@ -7,7 +7,7 @@ import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
 import { type LayoutConfig, DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
-import { fileUrl } from "@/lib/storage";
+import { fileUrl } from "@/lib/file-urls";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface Clip {

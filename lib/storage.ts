@@ -1,3 +1,4 @@
+import "server-only";
 import fs from "fs/promises";
 import path from "path";
 import { createReadStream } from "fs";
@@ -54,17 +55,6 @@ export function clipVoicePath(projectId: string, clipId: string): string {
 /** Relative path for a clip's thumbnail. */
 export function clipThumbPath(projectId: string, clipId: string): string {
   return `${projectId}/clips/${clipId}/thumb.jpg`;
-}
-
-/** Browser-facing URL for a stored file. */
-export function fileUrl(relPath: string | null | undefined): string {
-  if (!relPath) return "";
-  return `/api/files/${relPath}`;
-}
-
-/** Same as fileUrl but adds ?download=<filename> so the browser saves the file. */
-export function downloadUrl(relPath: string, filename: string): string {
-  return `/api/files/${relPath}?download=${encodeURIComponent(filename)}`;
 }
 
 /** Stream a file off disk — used by the file route. */

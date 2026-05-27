@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Upload, Film, Clock, Trash2, Edit3, Plus, Loader2, CheckCircle, AlertCircle, Zap } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
-import { fileUrl } from "@/lib/storage";
+import { fileUrl } from "@/lib/file-urls";
 
 interface ProjectClip { id: string; score: number | null; thumbnailUrl: string | null; }
 interface Project {

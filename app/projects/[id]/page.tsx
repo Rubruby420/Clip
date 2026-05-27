@@ -5,7 +5,7 @@ import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
-import { fileUrl, downloadUrl } from "@/lib/storage";
+import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
 interface Clip {
   id: string; title: string; startTime: number; endTime: number;
