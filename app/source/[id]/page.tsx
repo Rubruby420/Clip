@@ -348,6 +348,12 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
             ].sort((x, y) => x.startTime - y.startTime),
           }
         : prev);
+      // Nudge the playhead 50ms forward so it ends up inside the new
+      // B half (strictly inside, not on the boundary) — keeps the
+      // scissors button visible for an immediate second split without
+      // making the user scrub. Clamped so we never overshoot the
+      // source duration.
+      setCurrentTime((t) => Math.min(t + 0.05, Math.max(0, duration - 0.05)));
     } catch {
       alert("Couldn't split the clip — check your connection.");
     }

@@ -62,6 +62,26 @@ export default function WaveformTimeline({
   const endX = tToX(endTime);
   const playheadX = tToX(currentTime);
 
+  // Split-boundary detection — when two saved clips meet (e.g. after a
+  // razor cut), we want the shared edge to read as a "this is a split"
+  // marker, not just another clip edge. We collect every time T where
+  // some clip ends AND another starts within 50ms float-slop, then
+  // render those Xs in a contrasting accent instead of the subdued
+  // green clip-edge stroke.
+  const splitBoundaryTimes: number[] = (() => {
+    if (savedClips.length < 2) return [];
+    const sorted = [...savedClips].sort((a, b) => a.startTime - b.startTime);
+    const shared: number[] = [];
+    for (let i = 0; i < sorted.length - 1; i++) {
+      if (Math.abs(sorted[i].endTime - sorted[i + 1].startTime) < 0.05) {
+        shared.push(sorted[i].endTime);
+      }
+    }
+    return shared;
+  })();
+  const isSplitBoundaryT = (t: number) =>
+    splitBoundaryTimes.some((bt) => Math.abs(bt - t) < 0.05);
+
   // Drag interactions live on document so they keep firing even when the
   // pointer leaves the SVG. dragRef mirrors drag state for handlers
   // attached only once at drag start.
@@ -175,22 +195,43 @@ export default function WaveformTimeline({
 
           {/* Saved clips — one green band per range, plus a vertical
               divider on either edge so adjacent clips read as distinct
-              segments instead of one big block. */}
+              segments instead of one big block. Boundaries that are
+              shared with another clip (i.e. razor splits) get a brighter,
+              wider yellow accent so the split is unmistakable. The
+              band itself is also inset by 1px on each side so adjacent
+              green tints don't fuse into a solid block. */}
           {savedClips.map((c) => {
             const cx = tToX(c.startTime);
             const cw = Math.max(1, tToX(c.endTime) - cx);
+            const startIsSplit = isSplitBoundaryT(c.startTime);
+            const endIsSplit = isSplitBoundaryT(c.endTime);
             return (
               <g key={c.id} pointerEvents="none">
-                <rect x={cx} y={0} width={cw} height={height} fill="#22c55e" fillOpacity={0.18} />
-                <line x1={cx} x2={cx} y1={0} y2={height} stroke="#22c55e" strokeWidth={1.5} strokeOpacity={0.85} />
+                <rect
+                  x={cx + 1}
+                  y={0}
+                  width={Math.max(1, cw - 2)}
+                  height={height}
+                  fill="#22c55e"
+                  fillOpacity={0.18}
+                />
+                <line
+                  x1={cx}
+                  x2={cx}
+                  y1={0}
+                  y2={height}
+                  stroke={startIsSplit ? "#fef3c7" : "#22c55e"}
+                  strokeWidth={startIsSplit ? 3 : 1.5}
+                  strokeOpacity={startIsSplit ? 1 : 0.85}
+                />
                 <line
                   x1={cx + cw}
                   x2={cx + cw}
                   y1={0}
                   y2={height}
-                  stroke="#22c55e"
-                  strokeWidth={1.5}
-                  strokeOpacity={0.85}
+                  stroke={endIsSplit ? "#fef3c7" : "#22c55e"}
+                  strokeWidth={endIsSplit ? 3 : 1.5}
+                  strokeOpacity={endIsSplit ? 1 : 0.85}
                 />
               </g>
             );
@@ -250,11 +291,17 @@ export default function WaveformTimeline({
 
         {/* Razor button — appears on the playhead when the parent allows
             a split (i.e. the playhead is inside a saved clip). Offset
-            right of the line so it doesn't sit on top of the diamond. */}
+            right of the line so it doesn't sit on top of the diamond.
+            stopPropagation on BOTH pointerdown and mousedown — mouse
+            events are a separate stream from pointer events, and the
+            parent's onMouseDown=handleBarClick would otherwise seek the
+            playhead to the click X, moving the button out from under
+            the cursor before mouseup fires (so click never lands). */}
         {onSplit && (
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onSplit(); }}
             title="Split clip at playhead"
             className="absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md bg-brand-600 hover:bg-brand-500 text-white shadow-lg ring-1 ring-black/40 transition-colors"
