@@ -18,7 +18,11 @@ Solo-use app (no multi-tenant auth).
 - **Tailwind CSS** — dark-mode UI. Configs are `postcss.config.js` + `tailwind.config.js`
 - **Prisma + SQLite** — `prisma/schema.prisma`. DB file lives OUTSIDE the repo at
   `C:/Users/tania/ClipData/dev.db` (see gotcha — must not be in OneDrive)
-- **Cloudflare R2** — video storage (S3-compatible)
+- **Local disk storage** — `D:\clip\<projectId>\…` for source uploads, exports,
+  Story Mode TTS, 720p proxy, thumbnails. Configurable via `CLIP_STORAGE_DIR`.
+  Files are served back to the browser through `/api/files/[...path]` with HTTP
+  Range support. (Previously Cloudflare R2 — migrated 2026-05-26, see
+  `docs/superpowers/specs/2026-05-26-local-storage-migration-design.md`.)
 - **OpenAI Whisper** (`whisper-1`) — transcription with word-level timestamps
 - **OpenAI `gpt-4o-mini`** — highlight detection, viral-remix recipes, Story Mode
 - **OpenAI TTS** (`tts-1`) — AI voiceover generation for Story Mode
@@ -33,27 +37,27 @@ Solo-use app (no multi-tenant auth).
 ```
 app/
   page.tsx                      Dashboard — project list, delete/rename
-  upload/page.tsx               Drag-drop upload (chunked multipart to R2)
+  upload/page.tsx               Drag-drop upload (single streaming PUT to disk)
   projects/[id]/page.tsx        Clip grid — AI candidates with scores/thumbnails
   editor/[id]/page.tsx          Clip editor shell
   api/
-    upload/multipart/start      Create R2 multipart upload + presigned part URLs
-    upload/multipart/complete   Finalise the multipart upload
+    upload                      Streaming PUT — writes the file to D:\clip\<id>\source.<ext>
+    files/[...path]             Range-aware reader for everything under D:\clip
     process/[id]                AI pipeline (Whisper + AssemblyAI) — runs async
     remix/[clipId]              Viral Remix — YouTube search + AI remix recipe
-    projects, projects/[id]     Project CRUD
+    projects, projects/[id]     Project CRUD (DELETE wipes the storage folder)
     projects/[id]/retitle       Re-title generic "Clip N" clips from their transcript
     clips/[id]                  Clip CRUD
     clips/[id]/autocut          AI picks the best segment within a clip
     clips/[id]/story            Story Mode — generate the story plan
-    clips/[id]/story/voice      Story Mode — generate AI voiceover (TTS)
+    clips/[id]/story/voice      Story Mode — generate AI voiceover (TTS, writes mp3 to disk)
     clips/[id]/coach            Virality Coach — readiness check + reference videos
-    export/[id]                 FFmpeg render + upload final mp4 to R2
+    export/[id]                 FFmpeg render — writes export.mp4 into the clip folder
 components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel,
                                 RemixPanel, StoryPanel, CoachPanel
 lib/
   db.ts          Prisma client singleton
-  r2.ts          R2/S3 client + multipart helpers
+  storage.ts     Local-storage paths, traversal guard, fileUrl/downloadUrl helpers
   whisper.ts     Transcription wrapper
   assemblyai.ts  Highlight detection (auto-chapters)
   highlights.ts  LLM highlight detection + clip titling (fallback for assemblyai)
@@ -70,16 +74,12 @@ lib/
 1. `npm install`
 2. Create `.env.local` (gitignored) with these keys:
    ```
-   CLOUDFLARE_R2_ACCOUNT_ID=
-   CLOUDFLARE_R2_ACCESS_KEY_ID=
-   CLOUDFLARE_R2_SECRET_ACCESS_KEY=
-   CLOUDFLARE_R2_BUCKET_NAME=
-   CLOUDFLARE_R2_PUBLIC_URL=
    OPENAI_API_KEY=
    ASSEMBLYAI_API_KEY=
    YOUTUBE_API_KEY=
    JAMENDO_CLIENT_ID=
    DATABASE_URL="file:C:/Users/tania/ClipData/dev.db"
+   CLIP_STORAGE_DIR=D:/clip
    ```
    `YOUTUBE_API_KEY` (free): Google Cloud Console → create a project → enable
    "YouTube Data API v3" → Credentials → Create credentials → API key.
@@ -93,35 +93,33 @@ Other commands: `npm run build`, `npm run db:studio`.
 
 ## Important implementation notes / gotchas
 
-- **Uploads use chunked multipart, direct browser to R2.** The file is split into 95 MiB
-  chunks (`app/upload/page.tsx`), each PUT straight to a presigned R2 URL, 4 in parallel.
-  Do NOT route large uploads through the Next.js server — buffering multi-GB files in
-  memory fails (`formData()` throws). This was learned the hard way.
-- **R2 client needs `requestChecksumCalculation: "WHEN_REQUIRED"`** (set in `lib/r2.ts`).
-  Without it, the AWS SDK v3 adds `x-amz-checksum-*` headers that break browser uploads
-  via presigned URLs (signature / CORS mismatch).
-- **R2 client must use `forcePathStyle: true`** (set in `lib/r2.ts`). R2 only
-  guarantees DNS for `<account>.r2.cloudflarestorage.com`; the AWS SDK's default
-  virtual-hosted style produces `<bucket>.<account>.r2.cloudflarestorage.com`,
-  which can resolve in browsers (Chrome DoH / cached) but fails server-side in
-  Node with `getaddrinfo ENOTFOUND`. This broke the export route's source-video
-  download — every server-to-R2 request needs path-style addressing.
+- **Uploads stream a single PUT body straight to disk** (`app/upload/page.tsx` →
+  `app/api/upload/route.ts`). The route reads `request.body` as a Node `Readable`
+  and pipes it to `fs.createWriteStream` — the file is never buffered in memory.
+  Do NOT switch to `request.formData()` for the upload route; buffering multi-GB
+  files in memory fails. This is the same gotcha that killed the original R2
+  multipart approach.
+- **`/api/files/[...path]` is the only way the browser reads stored files.**
+  Direct `<video src="D:/...">` won't work. Routes that produce files write them
+  under `D:\clip\<projectId>\…` and the DB stores the *relative* path
+  (e.g. `abc123/source.mp4`). Components wrap reads with `fileUrl(...)` from
+  `lib/storage.ts`. Downloads use `downloadUrl(path, filename)` which adds
+  `?download=<name>` and the route returns `Content-Disposition: attachment`.
+- **AssemblyAI needs a URL it can fetch.** We extract audio with FFmpeg to a
+  local temp file, then hand the *file path* to the AssemblyAI SDK — which
+  uploads the bytes to `/upload` and uses the returned URL. Never pass a
+  `/api/files/...` URL; AssemblyAI's servers can't reach localhost.
+- **The path-traversal guard in `lib/storage.ts`** resolves every requested
+  path against `STORAGE_DIR` and rejects anything that escapes. Keep that
+  check intact in every storage helper.
 - **Subtitle paths must escape `:` for FFmpeg's `subtitles` filter** (handled in
   `lib/ffmpeg.ts`). The filter uses `:` as its option separator, so a Windows
   path like `C:/Users/...` gets mis-parsed (FFmpeg reads `C` as the file and
   `/...` as the `original_size` option). Replace `\` with `/` then escape every
   `:` as `\:`.
-- **Export download uses a same-origin proxy route + R2's
-  `ResponseContentDisposition`.** A naive `<a href="<r2-url>" download>` is
-  silently ignored by browsers for cross-origin URLs (clicking just plays the
-  video). `/api/export/[id]/download` 302s to a presigned R2 URL with
-  `Content-Disposition: attachment` baked in, which forces a save-to-disk.
-- **R2 bucket CORS must allow `PUT` and expose the `ETag` header.** Multipart completion
-  needs the ETag from each part-upload response. The bucket's CORS policy lists
-  `AllowedMethods: [GET,PUT,HEAD,POST]`, `AllowedHeaders: ["*"]`, `ExposeHeaders: ["ETag"]`,
-  and `AllowedOrigins` including `http://localhost:3000`.
-- **Dev server is locked to port 3000** (`next dev -p 3000` in package.json). The R2 CORS
-  `AllowedOrigins` depends on the exact origin — don't let it drift to another port.
+- **Dev server is locked to port 3000** (`next dev -p 3000` in package.json).
+  Same-origin file URLs (`/api/files/...`) follow the dev origin, so a port
+  drift just means cached pages 404 on assets — not a security issue.
 - **Tailwind / PostCSS configs must be `.js` (CommonJS)**, not `.ts` / `.mjs`. Next.js was
   not picking up the `.ts` / `.mjs` versions and the whole app rendered unstyled.
 - **The AI pipeline (`api/process/[id]`) runs async** — the route returns immediately and
@@ -190,8 +188,9 @@ Other commands: `npm run build`, `npm run db:studio`.
   context and produces a story plan — 3-5 beats, each with a hybrid voiceover line
   (original / bridge / new), a one-line on-screen callout, a sound/B-roll cue — plus a
   recommended re-cut and an AI-picked TTS voice. The script is editable in the panel;
-  "generate voiceover" runs OpenAI `tts-1`, uploads the mp3 to R2, and plays it inline.
-  Plan cached in `Clip.storyData` (JSON).
+  "generate voiceover" runs OpenAI `tts-1` and writes the mp3 to
+  `<projectId>/clips/<clipId>/voice.mp3`, served via `/api/files`. Plan cached
+  in `Clip.storyData` (JSON).
 - **Smart Import** (upload-page toggle → `api/process/[id]` body): when enabled, the
   process pipeline runs `selectBestSegment` on every detected highlight and saves clips
   already trimmed to their best part, within a user-chosen min-max length range
@@ -204,26 +203,25 @@ Other commands: `npm run build`, `npm run db:studio`.
   clips it also pulls reference viral videos via the Remix/YouTube helpers (POST does
   evaluation + video fetch; the import auto-check stores the report only).
 
-## Status (last session, 2026-05-18)
+## Status (last session, 2026-05-26)
 
-**All planned AI features are built, committed, and pushed to GitHub.**
+**Storage migrated from Cloudflare R2 to local disk (`D:\clip`).** All upload,
+process, proxy, waveform, finalize, export, voiceover, and project-delete code
+paths now read/write disk via `lib/storage.ts`. R2 code is fully removed; the
+`@aws-sdk/*` packages were uninstalled. Spec + plan live in
+`docs/superpowers/{specs,plans}/2026-05-26-*`.
 
-- Upload pipeline (multipart to R2): **working**, verified with a 5 GB file.
-- AI processing kicks off automatically after upload.
-- Editor and export are built; export had been exercised (left temp files in `.tmp/`).
-- **Highlight detection fixed** — LLM fallback gives clips real titles.
-- **Viral Remix, AI Auto-Cut, Story Mode, Virality Coach** — built and **tested live**.
-- **Smart Import** — built; runs only inside the import pipeline, so it will be
-  exercised on the next real upload (toggle is on the upload page).
-- **Database** — moved out of OneDrive to `C:/Users/tania/ClipData/dev.db` after a
-  OneDrive-sync incident wiped it once. Always back up before `prisma db push`.
-- **App is a clean slate.** The test project (UberX) and its video were deleted by the
-  user on purpose (a delete click in the dashboard also wipes the R2 video). The
-  database currently has no projects — upload a fresh video to use the app.
+- **All planned AI features still in place** — Viral Remix, AI Auto-Cut, Story
+  Mode, Virality Coach, Smart Import.
+- **Database** — `C:/Users/tania/ClipData/dev.db` (outside OneDrive — never
+  move it back).
+- **App is a clean slate.** No projects in the DB. Upload a fresh video to
+  exercise the new local-storage pipeline end-to-end.
 
 ### Next session
-- No feature backlog. Likely next steps: a live test of Smart Import + FFmpeg export
-  on a fresh upload, or a brand-new feature the user decides on.
+- Run the full AI flow on a real video to verify the migration in practice
+  (upload → process → edit → export → download → delete).
+- After the smoke test passes, the Cloudflare R2 bucket can be deleted.
 
 ## Repository
 
