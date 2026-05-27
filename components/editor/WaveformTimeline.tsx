@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Scissors } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 
 interface SavedClipRange {
@@ -22,6 +23,10 @@ interface Props {
   // auto-cut segment at a glance. Optional — empty array hides the
   // overlay.
   savedClips?: SavedClipRange[];
+  // Razor button. When provided, a scissors icon rides the playhead so
+  // the user can split the clip under it. Parent controls when this is
+  // active (typically only when the playhead is inside a saved clip).
+  onSplit?: () => void;
 }
 
 type DragMode = "start" | "end" | "playhead" | null;
@@ -31,7 +36,7 @@ type DragMode = "start" | "end" | "playhead" | null;
 // you can grab to scrub. Clicking the bar (outside the handles) seeks.
 export default function WaveformTimeline({
   peaks, duration, startTime, endTime, currentTime,
-  onStartChange, onEndChange, onSeek, savedClips = [],
+  onStartChange, onEndChange, onSeek, savedClips = [], onSplit,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -242,6 +247,22 @@ export default function WaveformTimeline({
         >
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45" />
         </div>
+
+        {/* Razor button — appears on the playhead when the parent allows
+            a split (i.e. the playhead is inside a saved clip). Offset
+            right of the line so it doesn't sit on top of the diamond. */}
+        {onSplit && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onSplit(); }}
+            title="Split clip at playhead"
+            className="absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md bg-brand-600 hover:bg-brand-500 text-white shadow-lg ring-1 ring-black/40 transition-colors"
+            style={{ left: playheadX + 8 }}
+          >
+            <Scissors className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       <div className="flex justify-center mt-2">

@@ -319,6 +319,40 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     setGeneratingWaveform(false);
   }
 
+  // The saved clip (if any) that contains the current playhead. Drives
+  // whether the razor button shows up on the waveform and what it splits.
+  const clipAtPlayhead = project?.clips.find(
+    (c) => currentTime > c.startTime && currentTime < c.endTime,
+  );
+
+  async function handleSplit() {
+    if (!clipAtPlayhead) return;
+    try {
+      const res = await fetch(`/api/clips/${clipAtPlayhead.id}/split`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ at: currentTime }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.a || !data.b) {
+        alert(data.error || "Couldn't split the clip.");
+        return;
+      }
+      setProject((prev) => prev
+        ? {
+            ...prev,
+            clips: [
+              ...prev.clips.filter((c) => c.id !== clipAtPlayhead.id),
+              data.a,
+              data.b,
+            ].sort((x, y) => x.startTime - y.startTime),
+          }
+        : prev);
+    } catch {
+      alert("Couldn't split the clip — check your connection.");
+    }
+  }
+
   async function handleSaveClip() {
     if (!project) return;
     if (outTime - inTime < 1) {
@@ -643,6 +677,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           onEndChange={setOutTime}
           onSeek={(t) => setCurrentTime(t)}
           savedClips={project?.clips ?? []}
+          onSplit={clipAtPlayhead ? handleSplit : undefined}
         />
       </div>
 
