@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, useCallback } from "react";
 import Link from "next/link";
 import { ArrowLeft, Zap, Sparkles, Loader2, Film, AudioLines } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
+import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
+import { useDocumentHistory } from "@/components/editor/useDocumentHistory";
+import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 import { type LayoutConfig, DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
 import { fileUrl } from "@/lib/file-urls";
@@ -37,6 +40,24 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const [captionConfig] = useState<CaptionConfig>(DEFAULT_CAPTION_CONFIG);
 
   const [aiCutting, setAiCutting] = useState(false);
+
+  // In-memory undo/redo (this beta surface has no auto-save yet).
+  const history = useUndoRedo();
+  useUndoRedoShortcuts(history.undo, history.redo);
+
+  const applyDoc = useCallback((d: { startTime: number; endTime: number; layout: LayoutConfig }) => {
+    setStartTime(d.startTime);
+    setEndTime(d.endTime);
+    setCurrentTime(d.startTime);
+    setLayout(d.layout);
+  }, []);
+
+  useDocumentHistory({
+    doc: { startTime, endTime, layout },
+    applyDoc,
+    enabled: !!clip,
+    history,
+  });
 
   useEffect(() => {
     (async () => {
@@ -153,6 +174,14 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         <span className="text-white text-sm font-medium truncate max-w-[280px]">{clip.title}</span>
 
         <div className="ml-auto flex items-center gap-2">
+          <UndoRedoButtons
+            undo={history.undo}
+            redo={history.redo}
+            canUndo={history.canUndo}
+            canRedo={history.canRedo}
+            undoLabel={history.undoLabel}
+            redoLabel={history.redoLabel}
+          />
           {peaks.length === 0 && (
             <button
               onClick={handleGenerateWaveform}

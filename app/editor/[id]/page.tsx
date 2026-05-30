@@ -13,6 +13,9 @@ import ViralTipsPanel from "@/components/editor/ViralTipsPanel";
 import CaptionPanel from "@/components/editor/CaptionPanel";
 import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
+import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
+import { useDocumentHistory } from "@/components/editor/useDocumentHistory";
+import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
@@ -69,6 +72,11 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     captionsEnabled: boolean;
     title: string;
   } | null>(null);
+
+  // Shared undo/redo command stack for this editor surface.
+  const history = useUndoRedo();
+  useUndoRedoShortcuts(history.undo, history.redo);
+
   // Load clip + project video
   useEffect(() => {
     (async () => {
@@ -131,6 +139,35 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startTime, endTime, layout, captionConfig.style, clip?.title, previewMode]);
 
+  // Undo/redo over the editable document. Recording is gated until the clip
+  // has loaded (so the initial load is free) and paused during a remix preview
+  // (so the preview's transient changes aren't recorded — Save pushes one
+  // explicit command for the whole remix instead).
+  const applyDoc = useCallback((d: {
+    startTime: number; endTime: number; layout: LayoutConfig;
+    captionStyle: string; captionsEnabled: boolean; title: string;
+  }) => {
+    setStartTime(d.startTime);
+    setEndTime(d.endTime);
+    setCurrentTime(d.startTime);
+    setLayout(d.layout);
+    setCaptionConfig((prev) => ({ ...prev, style: d.captionStyle as CaptionConfig["style"] }));
+    setCaptionsEnabled(d.captionsEnabled);
+    setClip((prev) => (prev ? { ...prev, title: d.title } : prev));
+  }, []);
+
+  const docHistory = useDocumentHistory({
+    doc: {
+      startTime, endTime, layout,
+      captionStyle: captionConfig.style,
+      captionsEnabled,
+      title: clip?.title ?? "",
+    },
+    applyDoc,
+    enabled: !!clip && !previewMode,
+    history,
+  });
+
   async function handleSavePreview() {
     if (!clip) return;
     // Persist everything in one shot now that the user has confirmed.
@@ -143,6 +180,31 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         captionStyle: captionConfig.style,
       }),
     });
+
+    // Record the whole remix as ONE undo step (before/after of the fields the
+    // remix touches), so a single undo reverses the entire applied remix.
+    const before = previewSnapshot;
+    const after = {
+      layout,
+      captionStyle: captionConfig.style,
+      captionsEnabled,
+      title: clip.title,
+    };
+    if (before) {
+      const restore = (s: { layout: LayoutConfig; captionStyle: string; captionsEnabled: boolean; title: string }) => {
+        docHistory.suppress();
+        setLayout(s.layout);
+        setCaptionConfig((prev) => ({ ...prev, style: s.captionStyle as CaptionConfig["style"] }));
+        setCaptionsEnabled(s.captionsEnabled);
+        setClip((prev) => (prev ? { ...prev, title: s.title } : prev));
+      };
+      history.push({
+        label: "remix",
+        undo: () => restore(before),
+        redo: () => restore(after),
+      });
+    }
+
     setPreviewMode(false);
     setPreviewSnapshot(null);
     setRemixApplied({
@@ -289,6 +351,14 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         <span className="text-white text-sm font-medium truncate max-w-[200px]">{clip.title}</span>
 
         <div className="ml-auto flex items-center gap-2">
+          <UndoRedoButtons
+            undo={history.undo}
+            redo={history.redo}
+            canUndo={history.canUndo}
+            canRedo={history.canRedo}
+            undoLabel={history.undoLabel}
+            redoLabel={history.redoLabel}
+          />
           {!hasProxy && clip && (
             <button
               onClick={handleGenerateProxy}

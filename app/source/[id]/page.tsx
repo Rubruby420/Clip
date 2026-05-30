@@ -8,11 +8,13 @@ import {
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
+import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
 import { DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG } from "@/lib/captions";
 import { formatDuration } from "@/lib/utils";
 import { detectTalkSegments } from "@/lib/silence";
 import { fileUrl } from "@/lib/file-urls";
+import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface SavedClip {
@@ -74,6 +76,16 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [autoCutting, setAutoCutting] = useState(false);
   const [autoCutIds, setAutoCutIds] = useState<string[]>([]);
   const [autoCutError, setAutoCutError] = useState<string | null>(null);
+
+  // Undo/redo. Every action on this surface writes to the DB immediately, so
+  // each command's undo fires a *reversing* server request (delete a created
+  // clip, PATCH a mute back, re-merge a split). Commands that recreate a clip
+  // get a new id from the server, so they track the live id in their closure
+  // and remap it on each redo. Auto-cut is intentionally NOT on the stack — it
+  // is an automatic import step with its own dedicated "Undo auto-cut" button.
+  const history = useUndoRedo();
+  useUndoRedoShortcuts(history.undo, history.redo);
+  const byStart = (a: SavedClip, b: SavedClip) => a.startTime - b.startTime;
 
   // Apply a fresh project payload to local state. Hoisted so the initial
   // load and the prep-poll loop both reuse it.
@@ -334,46 +346,52 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     .filter((c) => c.muted)
     .map((c) => ({ start: c.startTime, end: c.endTime }));
 
+  // Apply a mute value to one clip both locally and on the server. Shared by
+  // the toggle handler and its undo/redo command so all three go one path.
+  function setClipMutedLocal(clipId: string, muted: boolean) {
+    setProject((prev) => prev
+      ? { ...prev, clips: prev.clips.map((c) => (c.id === clipId ? { ...c, muted } : c)) }
+      : prev);
+  }
+  async function patchMuted(clipId: string, muted: boolean) {
+    const res = await fetch(`/api/clips/${clipId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ muted }),
+    });
+    if (!res.ok) throw new Error("PATCH failed");
+  }
+
   async function handleToggleMute() {
     if (!clipAtPlayhead) return;
-    const next = !clipAtPlayhead.muted;
+    const clipId = clipAtPlayhead.id;
+    const prevMuted = clipAtPlayhead.muted;
+    const next = !prevMuted;
     // Optimistic update so the band re-renders instantly.
-    setProject((prev) => prev
-      ? {
-          ...prev,
-          clips: prev.clips.map((c) =>
-            c.id === clipAtPlayhead.id ? { ...c, muted: next } : c,
-          ),
-        }
-      : prev);
+    setClipMutedLocal(clipId, next);
     try {
-      const res = await fetch(`/api/clips/${clipAtPlayhead.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ muted: next }),
+      await patchMuted(clipId, next);
+      history.push({
+        label: next ? "mute" : "unmute",
+        undo: async () => { await patchMuted(clipId, prevMuted); setClipMutedLocal(clipId, prevMuted); },
+        redo: async () => { await patchMuted(clipId, next); setClipMutedLocal(clipId, next); },
       });
-      if (!res.ok) throw new Error("PATCH failed");
     } catch {
       // Roll back the optimistic update if the server didn't accept it.
-      setProject((prev) => prev
-        ? {
-            ...prev,
-            clips: prev.clips.map((c) =>
-              c.id === clipAtPlayhead.id ? { ...c, muted: !next } : c,
-            ),
-          }
-        : prev);
+      setClipMutedLocal(clipId, prevMuted);
       alert("Couldn't toggle mute — check your connection.");
     }
   }
 
   async function handleSplit() {
     if (!clipAtPlayhead) return;
+    const original = clipAtPlayhead;
+    const splitAt = currentTime;
     try {
-      const res = await fetch(`/api/clips/${clipAtPlayhead.id}/split`, {
+      const res = await fetch(`/api/clips/${original.id}/split`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ at: currentTime }),
+        body: JSON.stringify({ at: splitAt }),
       });
       const data = await res.json();
       if (!res.ok || !data.a || !data.b) {
@@ -384,12 +402,59 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         ? {
             ...prev,
             clips: [
-              ...prev.clips.filter((c) => c.id !== clipAtPlayhead.id),
+              ...prev.clips.filter((c) => c.id !== original.id),
               data.a,
               data.b,
-            ].sort((x, y) => x.startTime - y.startTime),
+            ].sort(byStart),
           }
         : prev);
+
+      // Inverse command. `cur*` track the live ids: undo re-merges (deletes the
+      // two halves, recreates the original — which gets a NEW id), redo
+      // re-splits whatever the original currently is.
+      let curA: SavedClip = data.a;
+      let curB: SavedClip = data.b;
+      let curOriginal: SavedClip = original;
+      history.push({
+        label: "split clip",
+        undo: async () => {
+          await Promise.all([
+            fetch(`/api/clips/${curA.id}`, { method: "DELETE" }),
+            fetch(`/api/clips/${curB.id}`, { method: "DELETE" }),
+          ]);
+          const res2 = await fetch(`/api/projects/${id}/clips`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              startTime: original.startTime,
+              endTime: original.endTime,
+              muted: original.muted,
+              title: original.title,
+            }),
+          });
+          const d2 = await res2.json();
+          if (!res2.ok || !d2.clip) throw new Error("re-merge failed");
+          curOriginal = d2.clip;
+          const removedA = curA.id, removedB = curB.id;
+          setProject((prev) => prev
+            ? { ...prev, clips: [...prev.clips.filter((c) => c.id !== removedA && c.id !== removedB), d2.clip].sort(byStart) }
+            : prev);
+        },
+        redo: async () => {
+          const res2 = await fetch(`/api/clips/${curOriginal.id}/split`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ at: splitAt }),
+          });
+          const d2 = await res2.json();
+          if (!res2.ok || !d2.a || !d2.b) throw new Error("re-split failed");
+          const mergedId = curOriginal.id;
+          curA = d2.a; curB = d2.b;
+          setProject((prev) => prev
+            ? { ...prev, clips: [...prev.clips.filter((c) => c.id !== mergedId), d2.a, d2.b].sort(byStart) }
+            : prev);
+        },
+      });
       // Nudge the playhead 50ms forward so it ends up inside the new
       // B half (strictly inside, not on the boundary) — keeps the
       // scissors button visible for an immediate second split without
@@ -453,13 +518,45 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         return;
       }
       setProject((prev) => prev
-        ? { ...prev, clips: [...prev.clips, data.clip].sort((a, b) => a.startTime - b.startTime) }
+        ? { ...prev, clips: [...prev.clips, data.clip].sort(byStart) }
         : prev);
+      pushCreateCommand("mute selection", data.clip, { startTime: startAt, endTime: endAt, muted: true, title: "Muted" });
     } catch {
       alert("Couldn't mute the segment — check your connection.");
     } finally {
       setPendingMuteStart(null);
     }
+  }
+
+  // Record a "clip was created" command. Undo deletes the clip and drops it
+  // from local state; redo re-POSTs the same body (the server hands back a new
+  // id, which we remap into the closure so a later undo deletes the right one).
+  function pushCreateCommand(
+    label: string,
+    created: SavedClip,
+    body: { startTime: number; endTime: number; muted?: boolean; title?: string },
+  ) {
+    const live = { id: created.id };
+    history.push({
+      label,
+      undo: async () => {
+        await fetch(`/api/clips/${live.id}`, { method: "DELETE" });
+        const removed = live.id;
+        setProject((prev) => prev ? { ...prev, clips: prev.clips.filter((c) => c.id !== removed) } : prev);
+        setJustSaved((j) => (j && j.id === removed ? null : j));
+      },
+      redo: async () => {
+        const res = await fetch(`/api/projects/${id}/clips`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const d = await res.json();
+        if (!res.ok || !d.clip) throw new Error("recreate failed");
+        live.id = d.clip.id;
+        setProject((prev) => prev ? { ...prev, clips: [...prev.clips, d.clip].sort(byStart) } : prev);
+      },
+    });
   }
 
   // Single scissors handler:
@@ -494,6 +591,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       const data = await res.json();
       if (res.ok && data.clip) {
         setProject((prev) => prev ? { ...prev, clips: [...prev.clips, data.clip] } : prev);
+        pushCreateCommand("save clip", data.clip, { startTime: inTime, endTime: outTime });
         // Show the "make more clips?" modal — the user picks reset vs
         // continue vs finalize from there. We do NOT auto-advance the in
         // point any more so the modal owns the next-step decision.
@@ -586,6 +684,14 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         <span className="text-white text-sm font-medium truncate max-w-[280px]">{project.title}</span>
 
         <div className="ml-auto flex items-center gap-2">
+          <UndoRedoButtons
+            undo={history.undo}
+            redo={history.redo}
+            canUndo={history.canUndo}
+            canRedo={history.canRedo}
+            undoLabel={history.undoLabel}
+            redoLabel={history.redoLabel}
+          />
           {/* Manual generate buttons appear only when the background poll
               has given up or the user is mid-generate — keeps the header
               calm during the normal happy path where prep finishes on
