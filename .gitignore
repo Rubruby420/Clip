@@ -51,5 +51,5 @@ venv/
 prisma/*.db
 prisma/*.db-journal
 
-# Claude local settings
-.claude/settings.local.json
+# Claude Code config (editor tooling, not part of the app)
+.claude/
