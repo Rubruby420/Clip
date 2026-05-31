@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
 import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
@@ -45,6 +45,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  // Guard so the thumbnail backfill is requested at most once per mount.
+  const thumbsRequested = useRef(false);
 
   async function fetchProject() {
     const res = await fetch(`/api/projects/${id}`);
@@ -52,6 +54,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     const data = await res.json();
     setProject(data.project);
     setLoading(false);
+
+    // Manual cuts are created without a thumbnail. Backfill any that are
+    // missing one (off the Coach/finalize path), then refresh to show them.
+    if (!thumbsRequested.current && data.project?.clips?.some((c: Clip) => !c.thumbnailUrl)) {
+      thumbsRequested.current = true;
+      try {
+        const r = await fetch(`/api/projects/${id}/thumbnails`, { method: "POST" });
+        const j = await r.json();
+        if (r.ok && j.generated > 0) fetchProject();
+      } catch {}
+    }
   }
 
   useEffect(() => {
