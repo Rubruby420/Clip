@@ -24,6 +24,11 @@ interface Props {
   // of these ranges, the video element seeks to the range's end+epsilon
   // and continues from there. Undefined / empty = play through everything.
   skipRanges?: { start: number; end: number }[];
+  // Splice preview: an ORDERED list of source ranges to play back-to-back in
+  // the given order (which may differ from source time, so jumps can go
+  // backward). When non-empty it takes over playback — `skipRanges` is
+  // ignored and the trim snap is suppressed. Undefined = normal single-range.
+  playSequence?: { start: number; end: number }[];
 }
 
 function getAspectClass(ratio: string) {
@@ -86,11 +91,20 @@ function CaptionOverlay({ words, currentTime, config, enabled }: {
 const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   videoSrc, words, currentTime, onTimeUpdate, onLoadedMetadata,
   captionConfig, captionsEnabled, layout, startTime, endTime, skipRanges,
+  playSequence,
 }, ref) => {
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // Index of the segment currently playing in a splice sequence. Kept in a
+  // ref so the timeupdate handler can advance without re-subscribing.
+  const seqIdxRef = useRef(0);
+  const hasSequence = !!playSequence && playSequence.length > 0;
+  // Latest sequence in a ref so the once-bound handlers read fresh ranges.
+  const seqRef = useRef(playSequence);
+  seqRef.current = playSequence;
 
   // Background-blur uses a single frozen frame from the clip's start, not a
   // parallel video decode — running two 4K streams in lockstep crushes
@@ -149,14 +163,27 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   }, [layout.musicUrl, layout.musicVolume, layout.musicEnabled, startTime]);
 
   // Snap playback into the trimmed range whenever the trim changes (e.g.
-  // after AI Auto-Cut or manual slider drag).
+  // after AI Auto-Cut or manual slider drag). Suppressed for splice
+  // sequences, which manage their own (possibly non-contiguous) playback.
   useEffect(() => {
+    if (hasSequence) return;
     const v = mainVideoRef.current;
     if (!v) return;
     if (v.currentTime < startTime || v.currentTime > endTime) {
       v.currentTime = startTime;
     }
-  }, [startTime, endTime]);
+  }, [startTime, endTime, hasSequence]);
+
+  // When a splice sequence is set/changed, reset to its first segment so the
+  // next play starts the arranged order from the top.
+  useEffect(() => {
+    if (!hasSequence) return;
+    const v = mainVideoRef.current;
+    seqIdxRef.current = 0;
+    if (v && seqRef.current) {
+      try { v.currentTime = seqRef.current[0].start; } catch {}
+    }
+  }, [hasSequence, playSequence]);
 
   // When the hook overlay text is set (e.g. AI Remix Apply), rewind to the
   // clip's start so the user immediately sees the burned-in overlay.
@@ -176,9 +203,18 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
     const v = mainVideoRef.current;
     if (!v) return;
     if (v.paused) {
-      // Rewind to clip start if we ended (or are out of range) so the next
-      // play always replays the segment from the beginning.
-      if (v.currentTime >= endTime - 0.05 || v.currentTime < startTime) {
+      const seq = seqRef.current;
+      if (seq && seq.length > 0) {
+        // Restart the arranged sequence from the top if we're at/after its
+        // last segment; otherwise resume from the current segment.
+        const idx = seqIdxRef.current;
+        if (idx >= seq.length - 1 && v.currentTime >= seq[seq.length - 1].end - 0.05) {
+          seqIdxRef.current = 0;
+          v.currentTime = seq[0].start;
+        }
+      } else if (v.currentTime >= endTime - 0.05 || v.currentTime < startTime) {
+        // Rewind to clip start if we ended (or are out of range) so the next
+        // play always replays the segment from the beginning.
         v.currentTime = startTime;
       }
       v.play().catch(() => null);
@@ -244,7 +280,34 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         disablePictureInPicture
         onClick={togglePlay}
         onTimeUpdate={(e) => {
-          const t = e.currentTarget.currentTime;
+          const v = e.currentTarget;
+          const t = v.currentTime;
+
+          // Splice sequence: play segments back-to-back in arranged order.
+          // When the current segment ends, jump to the next one's start (which
+          // may be earlier in the source). Pause at the end of the sequence.
+          const seq = seqRef.current;
+          if (seq && seq.length > 0) {
+            let idx = seqIdxRef.current;
+            if (idx >= seq.length) idx = seq.length - 1;
+            const cur = seq[idx];
+            // If we've run off the current segment's end, advance.
+            if (t >= cur.end - 0.02) {
+              const next = idx + 1;
+              if (next < seq.length) {
+                seqIdxRef.current = next;
+                try { v.currentTime = seq[next].start; } catch {}
+              } else {
+                v.pause();
+              }
+              return;
+            }
+            // Guard: if the playhead drifted before the active segment (e.g.
+            // a manual scrub), keep reporting raw time but don't fight it.
+            onTimeUpdate(t);
+            return;
+          }
+
           // Skip past any muted range the playhead has entered. Done
           // before notifying the parent so the parent never sees a
           // currentTime inside a muted range — the seek is essentially
@@ -252,18 +315,19 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
           if (skipRanges && skipRanges.length > 0) {
             const hit = skipRanges.find((r) => t >= r.start && t < r.end);
             if (hit) {
-              e.currentTarget.currentTime = hit.end + 0.01;
+              v.currentTime = hit.end + 0.01;
               return;
             }
           }
           onTimeUpdate(t);
-          if (t >= endTime) e.currentTarget.pause();
+          if (t >= endTime) v.pause();
         }}
         onLoadedMetadata={(e) => {
           onLoadedMetadata(e.currentTarget.duration);
-          // Snap to the clip start on initial load so the first frame the
-          // user sees is the start of the trimmed segment.
-          e.currentTarget.currentTime = startTime;
+          // Snap to the first frame the user should see: the start of the
+          // arranged sequence in splice mode, else the trimmed segment start.
+          const seq = seqRef.current;
+          e.currentTarget.currentTime = seq && seq.length > 0 ? seq[0].start : startTime;
         }}
       />
 

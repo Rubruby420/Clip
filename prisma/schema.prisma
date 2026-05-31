@@ -41,6 +41,10 @@ model Clip {
   exportKey    String?
   thumbnailUrl String?
   muted        Boolean  @default(false)
+  // Splice sequence: ordered JSON [{ id, start, end }] in source seconds.
+  // null/empty => legacy single [startTime,endTime] clip. When set, these
+  // segments (in array order) drive sequence preview + concat export.
+  segments     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }

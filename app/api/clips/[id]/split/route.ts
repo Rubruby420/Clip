@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import type { WordTimestamp } from "@/lib/whisper";
+import { MIN_CUT } from "@/lib/silence";
 
 // Razor-tool split: replace one saved clip with two adjacent clips that
 // meet at `at`. Atomic — either both halves land or the original survives.
@@ -18,6 +19,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!Number.isFinite(at) || at <= clip.startTime || at >= clip.endTime) {
     return NextResponse.json(
       { error: "Split point must lie strictly between the clip's start and end" },
+      { status: 400 }
+    );
+  }
+  // Refuse a split that would leave either half too short to be usable.
+  if (at - clip.startTime < MIN_CUT || clip.endTime - at < MIN_CUT) {
+    return NextResponse.json(
+      { error: `Each half must be at least ${MIN_CUT}s long` },
       { status: 400 }
     );
   }

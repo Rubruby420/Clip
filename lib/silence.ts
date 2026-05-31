@@ -15,6 +15,13 @@
 //   - padding 0.25s on each side: keeps the segment from cutting on the
 //     first/last phoneme.
 
+// Minimum meaningful duration (seconds) for any clip or cut/mute region.
+// Anything shorter is a useless sub-pixel sliver on the timeline, so we
+// refuse to create it and clamp manual resizes against it. Shared by the
+// source editor, the clip-create route, and the split route. Comfortably
+// below detectTalkSegments' 1.2s floor, so auto-cut is never affected.
+export const MIN_CUT = 0.3;
+
 export interface TalkSegment {
   start: number;
   end: number;

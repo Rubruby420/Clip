@@ -270,6 +270,76 @@ export async function exportClip(opts: ExportOptions): Promise<void> {
   await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50 });
 }
 
+// Render a spliced clip: an ordered list of source-time segments stitched
+// into one mp4. Two steps so the concat is reliable on Windows:
+//   1. Trim each segment to its own temp mp4, RE-ENCODED with identical
+//      codec/resolution/fps/sample-rate params (and the same scale/pad as a
+//      normal export) — `-ss`/`-t` AFTER `-i` for frame-accurate cut points.
+//   2. Stitch with the concat demuxer + stream copy (safe because every part
+//      shares params).
+// v1 renders video+audio only — no captions/overlays/music (deferred).
+export async function exportSplicedClip(opts: {
+  inputPath: string;
+  outputPath: string;
+  segments: { start: number; end: number }[];
+  aspectRatio: "9:16" | "16:9" | "1:1";
+  blurBackground?: boolean;
+}): Promise<void> {
+  const bin = ffmpegBin();
+  const targetW = opts.aspectRatio === "16:9" ? 1920 : 1080;
+  const targetH = opts.aspectRatio === "16:9" ? 1080 : opts.aspectRatio === "9:16" ? 1920 : 1080;
+
+  const filter = opts.blurBackground
+    ? [
+        `[0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},boxblur=20:5[bg]`,
+        `[0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease[fg]`,
+        `[bg][fg]overlay=(W-w)/2:(H-h)/2[v]`,
+      ].join(";")
+    : `[0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black[v]`;
+
+  const partPaths: string[] = [];
+  const token = Math.random().toString(36).slice(2, 8);
+  try {
+    // 1. Encode each segment to a uniform temp part.
+    for (let i = 0; i < opts.segments.length; i++) {
+      const seg = opts.segments[i];
+      const dur = Math.max(0.05, seg.end - seg.start);
+      const part = tmpPath(`splice_${token}_${i}.mp4`);
+      partPaths.push(part);
+      const cmd = [
+        `"${bin}" -y`,
+        `-i "${opts.inputPath}"`,
+        `-ss ${seg.start}`,
+        `-t ${dur}`,
+        `-filter_complex "${filter}"`,
+        `-map [v] -map 0:a?`,
+        `-c:v libx264 -preset fast -crf 23 -r 30`,
+        `-c:a aac -b:a 128k -ar 48000 -ac 2`,
+        `-movflags +faststart`,
+        `"${part}"`,
+      ].join(" ");
+      await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50 });
+    }
+
+    // 2. Concat-demuxer stitch (stream copy — parts share params).
+    const listPath = tmpPath(`splice_${token}.txt`);
+    const listBody = partPaths
+      .map((p) => `file '${p.replace(/\\/g, "/")}'`)
+      .join("\n");
+    fs.writeFileSync(listPath, listBody);
+    try {
+      await execAsync(
+        `"${bin}" -y -f concat -safe 0 -i "${listPath}" -c copy -movflags +faststart "${opts.outputPath}"`,
+        { maxBuffer: 1024 * 1024 * 50 },
+      );
+    } finally {
+      try { fs.unlinkSync(listPath); } catch {}
+    }
+  } finally {
+    partPaths.forEach((p) => { try { fs.unlinkSync(p); } catch {} });
+  }
+}
+
 export async function generateSRT(
   words: Array<{ word: string; start: number; end: number }>,
   style: string

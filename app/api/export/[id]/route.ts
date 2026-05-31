@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { exportClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
+import { exportClip, exportSplicedClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
 import {
   resolveStorage,
   ensureDirFor,
@@ -41,7 +41,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const hookPath = tmpPath(`export_hook_${exportId}.ass`);
   const musicPath = tmpPath(`export_music_${exportId}.mp3`);
 
+  // Per-segment temp parts for the spliced-concat path are cleaned in finally.
+  const ar = aspectRatio as "9:16" | "16:9" | "1:1";
+
   try {
+    // Spliced clip: an ordered list of source segments stitched into one
+    // video. v1 renders video+audio only (no captions/overlays/music — those
+    // would need remapping onto the stitched timeline; deferred).
+    const splicedSegments = clip.segments
+      ? (JSON.parse(clip.segments) as Array<{ start: number; end: number }>)
+      : null;
+    if (Array.isArray(splicedSegments) && splicedSegments.length > 0) {
+      await exportSplicedClip({
+        inputPath: videoPath,
+        outputPath: outPath,
+        segments: splicedSegments,
+        aspectRatio: ar,
+        blurBackground,
+      });
+    } else {
     // Generate SRT captions
     const words = JSON.parse(clip.words) as Array<{ word: string; start: number; end: number }>;
     if (words.length > 0) {
@@ -81,7 +99,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       try { await downloadFile(musicUrl, musicPath); } catch (e) { console.warn("Music download failed:", e); }
     }
 
-    const ar = aspectRatio as "9:16" | "16:9" | "1:1";
     const w = ar === "16:9" ? 1920 : 1080;
     const h = ar === "16:9" ? 1080 : ar === "9:16" ? 1920 : 1080;
     if (overlayText || beats.length > 0) {
@@ -104,6 +121,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       musicVolume,
       blurBackground,
     });
+    }
 
     // Move the finished mp4 into the clip's storage folder.
     const exportRel = clipExportPath(clip.projectId, clip.id);

@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Scissors, Ban, Undo2 } from "lucide-react";
-import { formatDuration } from "@/lib/utils";
+import {
+  Scissors, Ban, Undo2, X,
+  ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight,
+} from "lucide-react";
+import { formatDuration, formatPreciseTime } from "@/lib/utils";
 
 interface SavedClipRange {
   id: string;
@@ -41,24 +44,69 @@ interface Props {
   // the waveform should draw a tentative marker at this time so the
   // user knows the next scissors click will close the range.
   pendingMuteStart?: number | null;
+  // Direct manipulation of muted (cut) regions. When provided, each muted
+  // band gets drag-to-move + edge-resize + a delete (✕). Commit fires once
+  // on pointer-up (onMuteRangeChange); delete fires immediately
+  // (onMuteDelete). Green content clips are never made interactive.
+  onMuteRangeChange?: (id: string, startTime: number, endTime: number) => void;
+  onMuteDelete?: (id: string) => void;
+  // Smallest allowed cut width (seconds). Resizes clamp against it.
+  minCut?: number;
+  // Splice mode: render the source's ordered segments as numbered bands with
+  // boundary markers, and show an "add splice point" button on the playhead.
+  // Read-only here — all editing (split/reorder/drop) happens in the parent's
+  // SpliceStrip. When spliceMode is on, the parent withholds the cut/mute
+  // props so those interactions are cleanly inert.
+  spliceMode?: boolean;
+  spliceSegments?: { id: string; start: number; end: number }[];
+  selectedSpliceId?: string | null;
+  onAddSplicePoint?: () => void;
 }
 
-type DragMode = "start" | "end" | "playhead" | null;
+// Drag targets. The trim handles + playhead are the originals; the three
+// region* kinds drive direct manipulation of a muted clip; the overview*
+// kinds drive the zoom minimap. regionId identifies the muted clip.
+type DragKind =
+  | "start" | "end" | "playhead"
+  | "regionMove" | "regionResizeL" | "regionResizeR"
+  | "overviewMove" | "overviewResizeL" | "overviewResizeR";
+interface DragState { kind: DragKind; regionId?: string }
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+// Tightest visible window (seconds). At this span the track shows ~MIN_VIEW
+// of audio across its full width, far finer than the 0.1s the user needs.
+const MIN_VIEW = 1;
 
 // SVG-based waveform timeline. Renders one vertical bar per peak with the
-// trimmed-out regions masked, draggable in/out handles, and a playhead
-// you can grab to scrub. Clicking the bar (outside the handles) seeks.
+// trimmed-out regions masked, draggable in/out handles, and a playhead you
+// can grab to scrub. Clicking the bar (outside the handles) seeks. The view
+// is a zoomable window over the source: [viewStart, viewStart+viewDuration]
+// maps across the track width, so you can zoom in to cut precisely.
 export default function WaveformTimeline({
   peaks, duration, startTime, endTime, currentTime,
   onStartChange, onEndChange, onSeek, savedClips = [], onSplit,
   splitTooltip = "Split clip at playhead",
   onToggleMute, playheadClipMuted = false,
   pendingMuteStart = null,
+  onMuteRangeChange, onMuteDelete, minCut = 0.3,
+  spliceMode = false, spliceSegments = [], selectedSpliceId = null, onAddSplicePoint,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const ovRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
-  const [drag, setDrag] = useState<DragMode>(null);
-  const dragRef = useRef<DragMode>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  // Captured at pointer-down on a muted region (or the overview box) so the
+  // document move handler works from stable coords (not a closure that
+  // changes identity every render and would tear down the listener).
+  const dragMetaRef = useRef<{ s0: number; e0: number; grabOffsetT: number } | null>(null);
+  // Live coords for the region currently being dragged — local only, so the
+  // band moves smoothly without a DB write per frame. Committed on pointer-up.
+  const [override, setOverride] = useState<{ id: string; start: number; end: number } | null>(null);
+
+  // Zoom window state. zoom === 1 fits the whole source; higher zooms in.
+  const [zoom, setZoom] = useState(1);
+  const [viewStart, setViewStart] = useState(0);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -72,19 +120,69 @@ export default function WaveformTimeline({
 
   const height = 80;
   const safeDuration = duration > 0 ? duration : 1;
-  const tToX = useCallback((t: number) => (Math.max(0, Math.min(safeDuration, t)) / safeDuration) * width, [safeDuration, width]);
-  const xToT = useCallback((x: number) => Math.max(0, Math.min(safeDuration, (x / width) * safeDuration)), [safeDuration, width]);
+  const ZOOM_MAX = Math.max(1, safeDuration / MIN_VIEW);
+
+  // Derived visible window. viewStart is read-clamped so a stale value after
+  // a zoom change can never render off the end of the source.
+  const zoomClamped = clamp(zoom, 1, ZOOM_MAX);
+  const viewDuration = safeDuration / zoomClamped;
+  const maxViewStart = Math.max(0, safeDuration - viewDuration);
+  const viewStartC = clamp(viewStart, 0, maxViewStart);
+  const viewEnd = viewStartC + viewDuration;
+  const pxPerSec = width / viewDuration;
+
+  // Window-aware mapping. tToX may now return values outside [0,width]
+  // (off-screen) — consumers clamp/cull. xToT clamps its result to the
+  // source so seeks/handles stay valid.
+  const tToX = useCallback(
+    (t: number) => (t - viewStartC) * pxPerSec,
+    [viewStartC, pxPerSec],
+  );
+  const xToT = useCallback(
+    (x: number) => clamp(viewStartC + x / pxPerSec, 0, safeDuration),
+    [viewStartC, pxPerSec, safeDuration],
+  );
 
   const startX = tToX(startTime);
   const endX = tToX(endTime);
   const playheadX = tToX(currentTime);
+  const onScreen = (x: number) => x >= 0 && x <= width;
+
+  // Overview (minimap) mapping — always spans the whole source across width.
+  const ovToX = (t: number) => (clamp(t, 0, safeDuration) / safeDuration) * width;
+
+  // Zoom anchored on a screen X so the time under the cursor/centre stays put.
+  const applyZoom = useCallback((nextZoomRaw: number, anchorX: number) => {
+    const nextZoom = clamp(nextZoomRaw, 1, ZOOM_MAX);
+    const curVD = safeDuration / zoomClamped;
+    const curPx = width / curVD;
+    const tAnchor = viewStartC + anchorX / curPx;
+    const nextVD = safeDuration / nextZoom;
+    const nextPx = width / nextVD;
+    const ns = clamp(tAnchor - anchorX / nextPx, 0, Math.max(0, safeDuration - nextVD));
+    setZoom(nextZoom);
+    setViewStart(ns);
+  }, [ZOOM_MAX, safeDuration, zoomClamped, width, viewStartC]);
+
+  const panBy = useCallback((deltaT: number) => {
+    setViewStart((vs) => clamp(vs + deltaT, 0, Math.max(0, safeDuration - safeDuration / zoomClamped)));
+  }, [safeDuration, zoomClamped]);
+
+  const nudge = useCallback((dir: -1 | 1, coarse: boolean) => {
+    onSeek(clamp(currentTime + dir * (coarse ? 1 : 0.1), 0, safeDuration));
+  }, [currentTime, onSeek, safeDuration]);
+
+  // Live refs for the once-attached wheel + key listeners.
+  const zoomRef = useRef(zoomClamped); zoomRef.current = zoomClamped;
+  const pxPerSecRef = useRef(pxPerSec); pxPerSecRef.current = pxPerSec;
+  const viewStartRef = useRef(viewStartC); viewStartRef.current = viewStartC;
+  const applyZoomRef = useRef(applyZoom); applyZoomRef.current = applyZoom;
+  const panByRef = useRef(panBy); panByRef.current = panBy;
+  const nudgeRef = useRef(nudge); nudgeRef.current = nudge;
 
   // Split-boundary detection — when two saved clips meet (e.g. after a
   // razor cut), we want the shared edge to read as a "this is a split"
-  // marker, not just another clip edge. We collect every time T where
-  // some clip ends AND another starts within 50ms float-slop, then
-  // render those Xs in a contrasting accent instead of the subdued
-  // green clip-edge stroke.
+  // marker, not just another clip edge.
   const splitBoundaryTimes: number[] = (() => {
     if (savedClips.length < 2) return [];
     const sorted = [...savedClips].sort((a, b) => a.startTime - b.startTime);
@@ -100,27 +198,123 @@ export default function WaveformTimeline({
     splitBoundaryTimes.some((bt) => Math.abs(bt - t) < 0.05);
 
   // Drag interactions live on document so they keep firing even when the
-  // pointer leaves the SVG. dragRef mirrors drag state for handlers
-  // attached only once at drag start.
+  // pointer leaves the SVG. dragRef mirrors drag state for handlers attached
+  // only once at drag start.
   useEffect(() => {
     if (!drag) return;
     dragRef.current = drag;
     const onMove = (e: PointerEvent) => {
-      if (!ref.current || !dragRef.current) return;
+      const cur = dragRef.current;
+      if (!cur) return;
+
+      // Overview (minimap) drags — pan or resize the visible window.
+      if (cur.kind === "overviewMove" || cur.kind === "overviewResizeL" || cur.kind === "overviewResizeR") {
+        if (!ovRef.current) return;
+        const orect = ovRef.current.getBoundingClientRect();
+        const t = clamp(((e.clientX - orect.left) / orect.width) * safeDuration, 0, safeDuration);
+        const vd = safeDuration / zoomRef.current;
+        if (cur.kind === "overviewMove") {
+          const grab = dragMetaRef.current?.grabOffsetT ?? 0;
+          setViewStart(clamp(t - grab, 0, Math.max(0, safeDuration - vd)));
+        } else if (cur.kind === "overviewResizeR") {
+          const newVD = clamp(t - viewStartRef.current, MIN_VIEW, safeDuration);
+          setZoom(safeDuration / newVD);
+        } else {
+          const vEnd = viewStartRef.current + vd;
+          const newVD = clamp(vEnd - t, MIN_VIEW, safeDuration);
+          setViewStart(Math.max(0, vEnd - newVD));
+          setZoom(safeDuration / newVD);
+        }
+        return;
+      }
+
+      if (!ref.current) return;
       const rect = ref.current.getBoundingClientRect();
       const t = xToT(e.clientX - rect.left);
-      if (dragRef.current === "start") onStartChange(Math.min(t, endTime - 0.5));
-      else if (dragRef.current === "end") onEndChange(Math.max(t, startTime + 0.5));
-      else if (dragRef.current === "playhead") onSeek(t);
+      if (cur.kind === "start") onStartChange(Math.min(t, endTime - 0.5));
+      else if (cur.kind === "end") onEndChange(Math.max(t, startTime + 0.5));
+      else if (cur.kind === "playhead") onSeek(t);
+      else if (cur.regionId && dragMetaRef.current) {
+        const { s0, e0, grabOffsetT } = dragMetaRef.current;
+        if (cur.kind === "regionMove") {
+          const w = e0 - s0;
+          const ns = clamp(t - grabOffsetT, 0, safeDuration - w);
+          setOverride({ id: cur.regionId, start: ns, end: ns + w });
+        } else if (cur.kind === "regionResizeL") {
+          const ns = clamp(t, 0, e0 - minCut);
+          setOverride({ id: cur.regionId, start: ns, end: e0 });
+        } else if (cur.kind === "regionResizeR") {
+          const ne = clamp(t, s0 + minCut, safeDuration);
+          setOverride({ id: cur.regionId, start: s0, end: ne });
+        }
+      }
     };
-    const onUp = () => { dragRef.current = null; setDrag(null); };
+    const onUp = () => {
+      const cur = dragRef.current;
+      // Commit a region drag once, on release.
+      if (cur?.regionId && override && override.id === cur.regionId && onMuteRangeChange) {
+        onMuteRangeChange(cur.regionId, override.start, override.end);
+      }
+      dragRef.current = null;
+      dragMetaRef.current = null;
+      setOverride(null);
+      setDrag(null);
+    };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
     return () => {
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
     };
-  }, [drag, endTime, startTime, xToT, onStartChange, onEndChange, onSeek]);
+  }, [drag, endTime, startTime, xToT, onStartChange, onEndChange, onSeek, safeDuration, minCut, override, onMuteRangeChange]);
+
+  // Native, non-passive wheel listener (React's onWheel is passive, so it
+  // can't preventDefault). Ctrl/⌘+wheel zooms toward the cursor; plain wheel
+  // pans when zoomed in (otherwise the page scrolls normally).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const cursorX = e.clientX - el.getBoundingClientRect().left;
+        applyZoomRef.current(zoomRef.current * Math.exp(-e.deltaY * 0.002), cursorX);
+      } else if (zoomRef.current > 1) {
+        e.preventDefault();
+        panByRef.current((e.deltaY + e.deltaX) / pxPerSecRef.current);
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Arrow-key nudge of the playhead (±0.1s, Shift = ±1s). Skipped while a
+  // text field is focused so typing isn't hijacked.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); nudgeRef.current(-1, e.shiftKey); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); nudgeRef.current(1, e.shiftKey); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Auto-follow: keep the playhead inside the window during playback.
+  // Suppressed while any drag is in progress (so it never fights a manual
+  // pan/scrub) and at fit zoom. A paused manual pan stays put.
+  useEffect(() => {
+    if (drag || zoomClamped <= 1) return;
+    const vd = safeDuration / zoomClamped;
+    const margin = vd * 0.1;
+    if (currentTime < viewStartC + margin) {
+      setViewStart(Math.max(0, currentTime - margin));
+    } else if (currentTime > viewStartC + vd - margin) {
+      setViewStart(clamp(currentTime - vd + margin, 0, Math.max(0, safeDuration - vd)));
+    }
+  }, [currentTime, drag, zoomClamped, viewStartC, safeDuration]);
 
   function handleBarClick(e: React.MouseEvent) {
     if (drag) return;
@@ -129,26 +323,111 @@ export default function WaveformTimeline({
     onSeek(xToT(e.clientX - rect.left));
   }
 
-  // Bar count is whatever fits; if peaks > width we down-sample by index.
+  // Minimum on-screen width (px) for a muted-region overlay, so even a
+  // hair-thin cut stays grabbable and deletable.
+  const MIN_HIT = 14;
+
+  // Start dragging a muted region. Captures the region's committed coords +
+  // where along it the user grabbed, so the document move handler can work
+  // from stable numbers regardless of re-renders.
+  function beginRegionDrag(e: React.PointerEvent, c: SavedClipRange, kind: DragKind) {
+    e.stopPropagation();
+    const rect = ref.current?.getBoundingClientRect();
+    const pointerT = rect ? xToT(e.clientX - rect.left) : c.startTime;
+    dragMetaRef.current = { s0: c.startTime, e0: c.endTime, grabOffsetT: pointerT - c.startTime };
+    setDrag({ kind, regionId: c.id });
+  }
+
+  // Start dragging the overview window box.
+  function beginOverviewDrag(e: React.PointerEvent, kind: DragKind) {
+    e.stopPropagation();
+    const orect = ovRef.current?.getBoundingClientRect();
+    const pointerT = orect ? clamp(((e.clientX - orect.left) / orect.width) * safeDuration, 0, safeDuration) : viewStartC;
+    dragMetaRef.current = { s0: viewStartC, e0: viewEnd, grabOffsetT: pointerT - viewStartC };
+    setDrag({ kind });
+  }
+
+  // Click the overview track (outside the box) to recenter the window there.
+  function handleOverviewClick(e: React.MouseEvent) {
+    if (drag || zoomClamped <= 1 || !ovRef.current) return;
+    const orect = ovRef.current.getBoundingClientRect();
+    const t = clamp(((e.clientX - orect.left) / orect.width) * safeDuration, 0, safeDuration);
+    setViewStart(clamp(t - viewDuration / 2, 0, maxViewStart));
+  }
+
+  // Bar count is whatever fits; bars span only the visible window.
   const barWidth = 2;
   const gap = 1;
   const barCount = Math.max(1, Math.floor(width / (barWidth + gap)));
   const bars: { x: number; h: number }[] = [];
   if (peaks.length > 0) {
     for (let i = 0; i < barCount; i++) {
-      const peakIdx = Math.floor((i / barCount) * peaks.length);
+      const tBar = viewStartC + (i / barCount) * viewDuration;
+      const peakIdx = Math.min(peaks.length - 1, Math.floor((tBar / safeDuration) * peaks.length));
       const v = peaks[peakIdx] ?? 0;
       const h = Math.max(1, v * height * 0.92);
       bars.push({ x: i * (barWidth + gap), h });
     }
   }
 
+  // Floating playhead buttons flip to the left of the line when it's near
+  // the right edge so they don't get clipped off-screen.
+  const flipButtons = playheadX > width - 70;
+  const scissorsLeft = flipButtons ? playheadX - 30 : playheadX + 8;
+  const muteBtnLeft = flipButtons ? playheadX - 58 : playheadX + 36;
+
   return (
     <div className="px-4 py-3 bg-surface-800 border-t border-surface-600 select-none">
-      <div className="flex justify-between text-xs text-surface-500 mb-2">
-        <span>{formatDuration(startTime)}</span>
-        <span className="text-brand-400">{formatDuration(currentTime)}</span>
-        <span>{formatDuration(endTime)}</span>
+      {/* Toolbar: zoom controls + precise playhead readout + nudge */}
+      <div className="flex items-center gap-1.5 mb-2 text-xs text-surface-500">
+        <button
+          type="button"
+          onClick={() => applyZoom(zoomClamped / 1.5, width / 2)}
+          disabled={zoomClamped <= 1}
+          title="Zoom out"
+          className="p-1 rounded hover:bg-surface-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => applyZoom(zoomClamped * 1.5, width / 2)}
+          disabled={zoomClamped >= ZOOM_MAX}
+          title="Zoom in (precise cutting)"
+          className="p-1 rounded hover:bg-surface-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => { setZoom(1); setViewStart(0); }}
+          disabled={zoomClamped <= 1}
+          title="Fit whole video"
+          className="p-1 rounded hover:bg-surface-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+        <span className="tabular-nums text-surface-400">{zoomClamped.toFixed(1)}×</span>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => nudge(-1, false)}
+            title="Nudge back 0.1s (←, Shift+← = 1s)"
+            className="p-1 rounded hover:bg-surface-700 hover:text-white transition-colors"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-brand-400 tabular-nums w-16 text-center">{formatPreciseTime(currentTime)}</span>
+          <button
+            type="button"
+            onClick={() => nudge(1, false)}
+            title="Nudge forward 0.1s (→, Shift+→ = 1s)"
+            className="p-1 rounded hover:bg-surface-700 hover:text-white transition-colors"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       <div
@@ -162,17 +441,10 @@ export default function WaveformTimeline({
         }}
       >
         <svg width={width} height={height} className="block">
-          {/* Waveform bars. When peaks aren't ready yet we render a
-              shimmer-style skeleton of varying-height bars so the area
-              looks like it's loading, not broken. A flat 2px line read
-              as "this thing is empty / unavailable." */}
+          {/* Waveform bars (skeleton while peaks load). */}
           {peaks.length === 0 ? (
             <g className="animate-pulse">
               {Array.from({ length: barCount }).map((_, i) => {
-                // Smooth pseudo-random heights so the skeleton has the
-                // visual rhythm of a real waveform without claiming to
-                // be real data. Two superposed sines + offset to avoid
-                // a perfect repeat.
                 const phase = (i / barCount) * Math.PI * 6;
                 const h = Math.max(2, (Math.sin(phase) * 0.35 + Math.sin(phase * 0.5 + 1.7) * 0.25 + 0.45) * height * 0.6);
                 return (
@@ -203,25 +475,27 @@ export default function WaveformTimeline({
           )}
 
           {/* Mask the excluded regions so the selected segment pops. */}
-          {startX > 0 && (
-            <rect x={0} y={0} width={startX} height={height} fill="#000000" fillOpacity={0.55} />
-          )}
-          {endX < width && (
-            <rect x={endX} y={0} width={width - endX} height={height} fill="#000000" fillOpacity={0.55} />
-          )}
+          {(() => {
+            const sx = clamp(startX, 0, width);
+            const ex = clamp(endX, 0, width);
+            return (
+              <>
+                {sx > 0 && <rect x={0} y={0} width={sx} height={height} fill="#000000" fillOpacity={0.55} />}
+                {ex < width && <rect x={ex} y={0} width={Math.max(0, width - ex)} height={height} fill="#000000" fillOpacity={0.55} />}
+              </>
+            );
+          })()}
 
-          {/* Saved clips — one green band per range, plus a vertical
-              divider on either edge so adjacent clips read as distinct
-              segments instead of one big block. Boundaries that are
-              shared with another clip (i.e. razor splits) get a brighter,
-              wider yellow accent so the split is unmistakable. The
-              band itself is also inset by 1px on each side so adjacent
-              green tints don't fuse into a solid block. Muted clips
-              render in grey with a horizontal strike-through so they
-              read as "this part has been removed from playback." */}
+          {/* Saved clips — one band per range, edges drawn as dividers.
+              Off-window clips are skipped; partially-visible ones clamp to
+              the viewport. Muted clips render grey with a strike-through. */}
           {savedClips.map((c) => {
             const cx = tToX(c.startTime);
-            const cw = Math.max(1, tToX(c.endTime) - cx);
+            const cxe = tToX(c.endTime);
+            if (cxe < 0 || cx > width) return null;
+            const left = clamp(cx, 0, width);
+            const right = clamp(cxe, 0, width);
+            const bandW = Math.max(0, right - left);
             const startIsSplit = isSplitBoundaryT(c.startTime);
             const endIsSplit = isSplitBoundaryT(c.endTime);
             const bandFill = c.muted ? "#6b7280" : "#22c55e";
@@ -229,100 +503,149 @@ export default function WaveformTimeline({
             const edgeColor = c.muted ? "#6b7280" : "#22c55e";
             return (
               <g key={c.id} pointerEvents="none">
-                <rect
-                  x={cx + 1}
-                  y={0}
-                  width={Math.max(1, cw - 2)}
-                  height={height}
-                  fill={bandFill}
-                  fillOpacity={bandOpacity}
-                />
-                {c.muted && (
+                <rect x={left} y={0} width={bandW} height={height} fill={bandFill} fillOpacity={bandOpacity} />
+                {c.muted && bandW > 2 && (
                   <line
-                    x1={cx + 1}
-                    x2={cx + cw - 1}
-                    y1={height / 2}
-                    y2={height / 2}
-                    stroke="#9ca3af"
-                    strokeWidth={2}
-                    strokeOpacity={0.85}
-                    strokeDasharray="4 3"
+                    x1={left + 1} x2={right - 1} y1={height / 2} y2={height / 2}
+                    stroke="#9ca3af" strokeWidth={2} strokeOpacity={0.85} strokeDasharray="4 3"
                   />
                 )}
-                <line
-                  x1={cx}
-                  x2={cx}
-                  y1={0}
-                  y2={height}
-                  stroke={startIsSplit && !c.muted ? "#fef3c7" : edgeColor}
-                  strokeWidth={startIsSplit && !c.muted ? 3 : 1.5}
-                  strokeOpacity={startIsSplit && !c.muted ? 1 : 0.85}
-                />
-                <line
-                  x1={cx + cw}
-                  x2={cx + cw}
-                  y1={0}
-                  y2={height}
-                  stroke={endIsSplit && !c.muted ? "#fef3c7" : edgeColor}
-                  strokeWidth={endIsSplit && !c.muted ? 3 : 1.5}
-                  strokeOpacity={endIsSplit && !c.muted ? 1 : 0.85}
-                />
+                {onScreen(cx) && (
+                  <line
+                    x1={cx} x2={cx} y1={0} y2={height}
+                    stroke={startIsSplit && !c.muted ? "#fef3c7" : edgeColor}
+                    strokeWidth={startIsSplit && !c.muted ? 3 : 1.5}
+                    strokeOpacity={startIsSplit && !c.muted ? 1 : 0.85}
+                  />
+                )}
+                {onScreen(cxe) && (
+                  <line
+                    x1={cxe} x2={cxe} y1={0} y2={height}
+                    stroke={endIsSplit && !c.muted ? "#fef3c7" : edgeColor}
+                    strokeWidth={endIsSplit && !c.muted ? 3 : 1.5}
+                    strokeOpacity={endIsSplit && !c.muted ? 1 : 0.85}
+                  />
+                )}
               </g>
             );
           })}
 
           {/* Selected segment tint */}
-          <rect
-            x={startX}
-            y={0}
-            width={Math.max(0, endX - startX)}
-            height={height}
-            fill="#6366f1"
-            fillOpacity={0.12}
-            pointerEvents="none"
-          />
+          {(() => {
+            const sx = clamp(startX, 0, width);
+            const ex = clamp(endX, 0, width);
+            return <rect x={sx} y={0} width={Math.max(0, ex - sx)} height={height} fill="#6366f1" fillOpacity={0.12} pointerEvents="none" />;
+          })()}
 
-          {/* Tentative mute selection: dashed yellow line at the first
-              click, plus a translucent yellow band between it and the
-              current playhead so the user can see what's about to be
-              muted. Drawn before the playhead line so the playhead
-              stays visually on top. */}
+          {/* Tentative mute selection between the first click and the playhead. */}
           {pendingMuteStart !== null && (() => {
             const a = tToX(pendingMuteStart);
             const b = playheadX;
-            const x = Math.min(a, b);
-            const w = Math.max(1, Math.abs(b - a));
+            const x = clamp(Math.min(a, b), 0, width);
+            const xr = clamp(Math.max(a, b), 0, width);
             return (
               <g pointerEvents="none">
-                <rect x={x} y={0} width={w} height={height} fill="#fbbf24" fillOpacity={0.18} />
-                <line
-                  x1={a}
-                  x2={a}
-                  y1={0}
-                  y2={height}
-                  stroke="#fbbf24"
-                  strokeWidth={2}
-                  strokeDasharray="4 3"
-                />
+                <rect x={x} y={0} width={Math.max(0, xr - x)} height={height} fill="#fbbf24" fillOpacity={0.18} />
+                {onScreen(a) && (
+                  <line x1={a} x2={a} y1={0} y2={height} stroke="#fbbf24" strokeWidth={2} strokeDasharray="4 3" />
+                )}
               </g>
             );
           })()}
 
+          {/* Splice segments — numbered bands + boundary markers. Read-only;
+              editing happens in the SpliceStrip below the waveform. */}
+          {spliceMode && spliceSegments.map((seg, i) => {
+            const sx = tToX(seg.start);
+            const sxe = tToX(seg.end);
+            if (sxe < 0 || sx > width) return null;
+            const left = clamp(sx, 0, width);
+            const right = clamp(sxe, 0, width);
+            const bw = Math.max(0, right - left);
+            const selected = seg.id === selectedSpliceId;
+            return (
+              <g key={`seg-${seg.id}`} pointerEvents="none">
+                <rect
+                  x={left} y={0} width={bw} height={height}
+                  fill="#6366f1" fillOpacity={selected ? 0.28 : 0.12}
+                />
+                {onScreen(sx) && i > 0 && (
+                  <line x1={sx} x2={sx} y1={0} y2={height} stroke="#a5b4fc" strokeWidth={2} />
+                )}
+                {bw > 14 && (
+                  <text x={left + 4} y={14} fill="#c7d2fe" fontSize={11} fontWeight={700}>{i + 1}</text>
+                )}
+              </g>
+            );
+          })}
+
           {/* Playhead line */}
-          <line
-            x1={playheadX}
-            x2={playheadX}
-            y1={0}
-            y2={height}
-            stroke="#ffffff"
-            strokeWidth={2}
-            pointerEvents="none"
-          />
+          {onScreen(playheadX) && (
+            <line x1={playheadX} x2={playheadX} y1={0} y2={height} stroke="#ffffff" strokeWidth={2} pointerEvents="none" />
+          )}
         </svg>
 
-        {/* Start handle */}
+        {/* Muted-region direct manipulation (move / resize / delete). DOM
+            overlays so they get pointer events; rendered before the trim
+            handles / playhead so those win z-order where they overlap. */}
+        {onMuteRangeChange && onMuteDelete && savedClips.filter((c) => c.muted).map((c) => {
+          const s = override?.id === c.id ? override.start : c.startTime;
+          const e = override?.id === c.id ? override.end : c.endTime;
+          const x = tToX(s);
+          const xe = tToX(e);
+          if (xe < 0 || x > width) return null;
+          const left = clamp(x, 0, width);
+          const right = clamp(xe, 0, width);
+          const w = Math.max(MIN_HIT, right - left);
+          const startVisible = onScreen(x);
+          const endVisible = onScreen(xe);
+          return (
+            <div
+              key={`mute-${c.id}`}
+              className="absolute top-0 bottom-0"
+              style={{ left, width: w, touchAction: "none" }}
+            >
+              <div
+                onPointerDown={(ev) => beginRegionDrag(ev, c, "regionMove")}
+                onMouseDown={(ev) => ev.stopPropagation()}
+                className="absolute inset-0 cursor-grab active:cursor-grabbing"
+                title="Drag to move this cut · drag an edge to resize · ✕ to delete"
+              />
+              {startVisible && (
+                <div
+                  onPointerDown={(ev) => beginRegionDrag(ev, c, "regionResizeL")}
+                  onMouseDown={(ev) => ev.stopPropagation()}
+                  className="absolute top-0 bottom-0 -left-1 w-2.5 cursor-ew-resize"
+                  title="Resize cut start"
+                />
+              )}
+              {endVisible && (
+                <div
+                  onPointerDown={(ev) => beginRegionDrag(ev, c, "regionResizeR")}
+                  onMouseDown={(ev) => ev.stopPropagation()}
+                  className="absolute top-0 bottom-0 -right-1 w-2.5 cursor-ew-resize"
+                  title="Resize cut end"
+                />
+              )}
+              {endVisible && (
+                <button
+                  type="button"
+                  onPointerDown={(ev) => ev.stopPropagation()}
+                  onMouseDown={(ev) => ev.stopPropagation()}
+                  onClick={(ev) => { ev.stopPropagation(); onMuteDelete(c.id); }}
+                  title="Delete this cut"
+                  className="absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center rounded bg-surface-900/80 text-surface-300 hover:text-white hover:bg-red-600 ring-1 ring-black/40 transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Start handle (clipped by overflow-hidden when off-window) */}
         <div
-          onPointerDown={(e) => { e.stopPropagation(); setDrag("start"); }}
+          onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "start" }); }}
           className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group"
           style={{ left: startX }}
         >
@@ -332,7 +655,7 @@ export default function WaveformTimeline({
 
         {/* End handle */}
         <div
-          onPointerDown={(e) => { e.stopPropagation(); setDrag("end"); }}
+          onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "end" }); }}
           className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group"
           style={{ left: endX }}
         >
@@ -341,23 +664,34 @@ export default function WaveformTimeline({
         </div>
 
         {/* Playhead grab */}
-        <div
-          onPointerDown={(e) => { e.stopPropagation(); setDrag("playhead"); }}
-          className="absolute top-0 bottom-0 w-4 -ml-2 cursor-grab active:cursor-grabbing"
-          style={{ left: playheadX }}
-        >
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45" />
-        </div>
+        {onScreen(playheadX) && (
+          <div
+            onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "playhead" }); }}
+            className="absolute top-0 bottom-0 w-4 -ml-2 cursor-grab active:cursor-grabbing"
+            style={{ left: playheadX }}
+          >
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45" />
+          </div>
+        )}
 
-        {/* Razor button — appears on the playhead when the parent allows
-            a split (i.e. the playhead is inside a saved clip). Offset
-            right of the line so it doesn't sit on top of the diamond.
-            stopPropagation on BOTH pointerdown and mousedown — mouse
-            events are a separate stream from pointer events, and the
-            parent's onMouseDown=handleBarClick would otherwise seek the
-            playhead to the click X, moving the button out from under
-            the cursor before mouseup fires (so click never lands). */}
-        {onSplit && (
+        {/* Add-splice-point button — rides the playhead in splice mode and
+            divides the segment under it into two. */}
+        {spliceMode && onAddSplicePoint && onScreen(playheadX) && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onAddSplicePoint(); }}
+            title="Add a splice point here (divide the segment)"
+            className="absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg ring-1 ring-black/40 transition-colors"
+            style={{ left: scissorsLeft }}
+          >
+            <Scissors className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Razor button — rides the playhead when a split is allowed. */}
+        {onSplit && onScreen(playheadX) && (
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
@@ -365,17 +699,14 @@ export default function WaveformTimeline({
             onClick={(e) => { e.stopPropagation(); onSplit(); }}
             title={splitTooltip}
             className="absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md bg-brand-600 hover:bg-brand-500 text-white shadow-lg ring-1 ring-black/40 transition-colors"
-            style={{ left: playheadX + 8 }}
+            style={{ left: scissorsLeft }}
           >
             <Scissors className="w-3.5 h-3.5" />
           </button>
         )}
 
-        {/* Mute toggle button — sits to the right of the scissors.
-            Same stopPropagation treatment for the same reason. Icon
-            and tooltip flip based on the current muted state of the
-            clip under the playhead. */}
-        {onToggleMute && (
+        {/* Mute toggle button — sits next to the scissors. */}
+        {onToggleMute && onScreen(playheadX) && (
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
@@ -387,17 +718,52 @@ export default function WaveformTimeline({
                 ? "bg-amber-600 hover:bg-amber-500"
                 : "bg-surface-700 hover:bg-surface-600"
             }`}
-            style={{ left: playheadX + 36 }}
+            style={{ left: muteBtnLeft }}
           >
             {playheadClipMuted ? <Undo2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
           </button>
         )}
       </div>
 
-      <div className="flex justify-center mt-2">
-        <span className="text-xs text-surface-500">
-          Clip duration: <span className="text-white">{formatDuration(endTime - startTime)}</span>
+      {/* Overview / minimap — full source with a draggable window box. Only
+          interactive once zoomed in. */}
+      <div
+        ref={ovRef}
+        onMouseDown={handleOverviewClick}
+        className={`relative mt-1.5 h-4 rounded bg-surface-700/60 overflow-hidden ${zoomClamped > 1 ? "cursor-pointer" : ""}`}
+      >
+        {zoomClamped > 1 && (() => {
+          const boxLeft = ovToX(viewStartC);
+          const boxW = Math.max(8, ovToX(viewEnd) - boxLeft);
+          return (
+            <div
+              onPointerDown={(e) => beginOverviewDrag(e, "overviewMove")}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="absolute top-0 bottom-0 bg-brand-500/30 border border-brand-400/70 rounded cursor-grab active:cursor-grabbing"
+              style={{ left: boxLeft, width: boxW, touchAction: "none" }}
+            >
+              <div
+                onPointerDown={(e) => beginOverviewDrag(e, "overviewResizeL")}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="absolute top-0 bottom-0 -left-0.5 w-1.5 cursor-ew-resize bg-brand-300/70"
+              />
+              <div
+                onPointerDown={(e) => beginOverviewDrag(e, "overviewResizeR")}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="absolute top-0 bottom-0 -right-0.5 w-1.5 cursor-ew-resize bg-brand-300/70"
+              />
+            </div>
+          );
+        })()}
+      </div>
+
+      <div className="flex justify-between mt-2 text-xs text-surface-500">
+        <span>{formatDuration(viewStartC)}</span>
+        <span>
+          Clip: <span className="text-white">{formatDuration(endTime - startTime)}</span>
+          {zoomClamped > 1 && <span className="text-surface-600"> · viewing {formatPreciseTime(viewDuration)}</span>}
         </span>
+        <span>{formatDuration(viewEnd)}</span>
       </div>
     </div>
   );
