@@ -94,3 +94,38 @@ export function detectTalkSegments(
     end: Math.min(duration, s.end + padding),
   }));
 }
+
+// Map a single 0..1 "sensitivity" dial onto detectTalkSegments options so the
+// UI never exposes raw thresholds. 0 = gentle (only long, clearly-silent gaps
+// are cut), 1 = aggressive (shorter, less-quiet pauses are cut too). 0.5 lands
+// close to the function's own defaults.
+export function sensitivityToOpts(sensitivity: number): DetectOptions {
+  const s = Math.max(0, Math.min(1, sensitivity));
+  return {
+    silenceThreshold: 0.06 + s * 0.12, // 0.06 → 0.18 of p90
+    minSilenceGap: 1.2 - s * 0.85,     // 1.2s → 0.35s
+  };
+}
+
+// Readout for the "remove silences" UI: how much of the source survives, how
+// much was dropped, and how many distinct silent gaps were cut (leading,
+// trailing, and between kept segments). Order-independent.
+export function summarizeSilenceRemoval(
+  segments: readonly { start: number; end: number }[],
+  duration: number,
+): { keptDuration: number; removedDuration: number; gapCount: number } {
+  if (!Array.isArray(segments) || segments.length === 0 || duration <= 0) {
+    return { keptDuration: 0, removedDuration: 0, gapCount: 0 };
+  }
+  const ordered = [...segments].sort((a, b) => a.start - b.start);
+  const kept = ordered.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
+  const EPS = 0.05; // ignore sub-frame slivers
+  let gapCount = 0;
+  if (ordered[0].start > EPS) gapCount++;
+  for (let i = 1; i < ordered.length; i++) {
+    if (ordered[i].start - ordered[i - 1].end > EPS) gapCount++;
+  }
+  if (ordered[ordered.length - 1].end < duration - EPS) gapCount++;
+  const keptDuration = Math.min(kept, duration);
+  return { keptDuration, removedDuration: Math.max(0, duration - keptDuration), gapCount };
+}

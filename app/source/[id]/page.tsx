@@ -9,11 +9,12 @@ import {
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
 import SpliceStrip, { type Segment } from "@/components/editor/SpliceStrip";
+import SilenceControls from "@/components/editor/SilenceControls";
 import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
 import { DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG } from "@/lib/captions";
 import { formatDuration } from "@/lib/utils";
-import { detectTalkSegments, MIN_CUT } from "@/lib/silence";
+import { detectTalkSegments, MIN_CUT, sensitivityToOpts, summarizeSilenceRemoval } from "@/lib/silence";
 import { seqTotal, seqToSource, clampSeq } from "@/lib/splice";
 import { fileUrl } from "@/lib/file-urls";
 import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
@@ -96,6 +97,13 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [selectedSpliceId, setSelectedSpliceId] = useState<string | null>(null);
   const [savedSpliceId, setSavedSpliceId] = useState<string | null>(null);
   const [savingSplice, setSavingSplice] = useState(false);
+
+  // Silence removal ("waveform cut"): collapse the source to only the talking
+  // parts so every non-speaking gap is dropped from the output. Lives on the
+  // splice tool — the detected speech segments become the stitched sequence.
+  const [silenceApplied, setSilenceApplied] = useState(false);
+  const [silenceSensitivity, setSilenceSensitivity] = useState(0.5);
+  const silencePatchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Ordered ranges fed to the preview's sequence player. Memoized so its
   // identity is stable across renders (otherwise CanvasPreview's reset effect
@@ -787,6 +795,68 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     setSavingSplice(false);
   }
 
+  // ---- Silence removal (waveform cut) -----------------------------------
+
+  // Build the talking-only sequence at a given sensitivity. Returns null if no
+  // clear speech was found (caller leaves the current arrangement untouched).
+  function detectSilenceSegments(sensitivity: number): Segment[] | null {
+    if (peaks.length === 0 || duration <= 0) return null;
+    const segs = detectTalkSegments(peaks, duration, sensitivityToOpts(sensitivity));
+    if (segs.length === 0) return null;
+    return segs.map((s) => ({ id: crypto.randomUUID(), start: s.start, end: s.end }));
+  }
+
+  // Primary action: drop every non-speaking gap, leaving one continuous clip.
+  // Switches into the splice tool and records a single undo step.
+  function handleRemoveSilences() {
+    const next = detectSilenceSegments(silenceSensitivity);
+    if (!next) {
+      alert("No clear speech detected — lower the sensitivity and try again.");
+      return;
+    }
+    if (tool !== "splice") setTool("splice");
+    const prev = spliceSegments;
+    const wasApplied = silenceApplied;
+    setSpliceSegments(next);
+    setSelectedSpliceId(null);
+    setCurrentTime(0);
+    setSilenceApplied(true);
+    if (savedSpliceId) void patchSegments(savedSpliceId, next);
+    history.push({
+      label: "remove silences",
+      undo: async () => {
+        setSpliceSegments(prev);
+        setSilenceApplied(wasApplied);
+        setCurrentTime(0);
+        if (savedSpliceId && prev) await patchSegments(savedSpliceId, prev);
+      },
+      redo: async () => {
+        setSpliceSegments(next);
+        setSilenceApplied(true);
+        setCurrentTime(0);
+        if (savedSpliceId) await patchSegments(savedSpliceId, next);
+      },
+    });
+  }
+
+  // Live sensitivity tweak. Once silences have been removed, dragging the
+  // slider re-detects and updates the sequence in place. These micro-edits are
+  // intentionally NOT pushed onto the undo stack — the single "remove silences"
+  // entry owns the whole operation. A debounced patch persists if saved.
+  function handleSensitivityChange(v: number) {
+    setSilenceSensitivity(v);
+    if (!silenceApplied) return;
+    const next = detectSilenceSegments(v);
+    if (!next) return;
+    setSpliceSegments(next);
+    setCurrentTime(0);
+    if (savedSpliceId) {
+      const target = savedSpliceId;
+      if (silencePatchTimer.current) clearTimeout(silencePatchTimer.current);
+      silencePatchTimer.current = setTimeout(() => { void patchSegments(target, next); }, 300);
+    }
+  }
+
   async function handleSaveClip() {
     if (!project) return;
     if (outTime - inTime < 1) {
@@ -879,6 +949,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   }
 
   const segmentDuration = Math.max(0, outTime - inTime);
+  // Silence-removal readout for the splice controls.
+  const silenceSummary = summarizeSilenceRemoval(spliceSegments ?? [], duration);
 
   return (
     <div className="min-h-screen bg-surface-900 flex flex-col">
@@ -985,6 +1057,13 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           <span className="flex-1">
             Auto-cut <span className="font-semibold">{autoCutIds.length}</span> talking segment{autoCutIds.length === 1 ? "" : "s"}. Each is highlighted on the timeline and listed on the left — review or open any one to fine-tune.
           </span>
+          <button
+            onClick={handleRemoveSilences}
+            className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold transition-colors"
+            title="Drop every silent gap and stitch the talking parts into one clean clip"
+          >
+            Remove all silence → one clip
+          </button>
           <button
             onClick={handleUndoAutoCut}
             className="px-2.5 py-1 rounded-md border border-green-600 text-green-200 hover:bg-green-800/40 text-[11px] font-semibold transition-colors"
@@ -1175,26 +1254,40 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           onAddSplicePoint={tool === "splice" ? addSplicePoint : undefined}
         />
         {tool === "splice" && (
-          spliceSegments
-            ? (
-              <SpliceStrip
-                segments={spliceSegments}
-                selectedId={selectedSpliceId}
-                onReorder={reorderSegment}
-                onDelete={deleteSegment}
-                onSelect={(id) => setSelectedSpliceId((cur) => (cur === id ? null : id))}
-              />
-            )
-            : (
-              <div className="px-4 py-3 border-t border-surface-700">
-                <button
-                  onClick={startSplice}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
-                >
-                  Start splice from current selection
-                </button>
-              </div>
-            )
+          <>
+            <SilenceControls
+              disabled={peaks.length === 0 || duration <= 0}
+              applied={silenceApplied}
+              sensitivity={silenceSensitivity}
+              onSensitivityChange={handleSensitivityChange}
+              onRemoveSilences={handleRemoveSilences}
+              segmentCount={spliceSegments?.length ?? 0}
+              keptDuration={silenceSummary.keptDuration}
+              removedDuration={silenceSummary.removedDuration}
+              gapCount={silenceSummary.gapCount}
+              totalDuration={duration}
+            />
+            {spliceSegments
+              ? (
+                <SpliceStrip
+                  segments={spliceSegments}
+                  selectedId={selectedSpliceId}
+                  onReorder={reorderSegment}
+                  onDelete={deleteSegment}
+                  onSelect={(id) => setSelectedSpliceId((cur) => (cur === id ? null : id))}
+                />
+              )
+              : (
+                <div className="px-4 py-3 border-t border-surface-700">
+                  <button
+                    onClick={startSplice}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
+                  >
+                    Start splice from current selection
+                  </button>
+                </div>
+              )}
+          </>
         )}
       </div>
 
