@@ -5,6 +5,7 @@ import { Play, Pause } from "lucide-react";
 import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
+import { seqTotal, seqToSource, sourceToSeq } from "@/lib/splice";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 
@@ -105,6 +106,10 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   // Latest sequence in a ref so the once-bound handlers read fresh ranges.
   const seqRef = useRef(playSequence);
   seqRef.current = playSequence;
+  // Stable content signature — the reset effect keys off this (not the array
+  // reference, which the parent rebuilds every render) so it only re-snaps
+  // when the ranges actually change, not on every re-render during playback.
+  const seqSig = (playSequence ?? []).map((s) => `${s.start}:${s.end}`).join(",");
 
   // Background-blur uses a single frozen frame from the clip's start, not a
   // parallel video decode — running two 4K streams in lockstep crushes
@@ -183,7 +188,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
     if (v && seqRef.current) {
       try { v.currentTime = seqRef.current[0].start; } catch {}
     }
-  }, [hasSequence, playSequence]);
+  }, [hasSequence, seqSig]);
 
   // When the hook overlay text is set (e.g. AI Remix Apply), rewind to the
   // clip's start so the user immediately sees the burned-in overlay.
@@ -226,7 +231,18 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   function handleScrub(e: React.ChangeEvent<HTMLInputElement>) {
     const v = mainVideoRef.current;
     if (!v) return;
-    v.currentTime = startTime + parseFloat(e.target.value);
+    const value = parseFloat(e.target.value);
+    const seq = seqRef.current;
+    if (seq && seq.length > 0) {
+      // value is sequence-time; map to the right segment + source time, and
+      // set the active index BEFORE seeking so timeupdate doesn't advance off
+      // a stale segment.
+      const { srcTime, segIndex } = seqToSource(seq, value);
+      seqIdxRef.current = segIndex;
+      v.currentTime = srcTime;
+      return;
+    }
+    v.currentTime = startTime + value;
   }
 
   function formatTime(s: number) {
@@ -299,12 +315,13 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                 try { v.currentTime = seq[next].start; } catch {}
               } else {
                 v.pause();
+                onTimeUpdate(seqTotal(seq)); // land exactly on the sequence end
               }
               return;
             }
-            // Guard: if the playhead drifted before the active segment (e.g.
-            // a manual scrub), keep reporting raw time but don't fight it.
-            onTimeUpdate(t);
+            // Report SEQUENCE-time (0-based across kept segments) so the parent
+            // / scrubber reflect the output timeline, not raw source time.
+            onTimeUpdate(sourceToSeq(seq, t, idx));
             return;
           }
 

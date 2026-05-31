@@ -6,6 +6,7 @@ import {
   ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { formatDuration, formatPreciseTime } from "@/lib/utils";
+import { seqTotal, segOffsets, seqToSource } from "@/lib/splice";
 
 interface SavedClipRange {
   id: string;
@@ -119,7 +120,13 @@ export default function WaveformTimeline({
   }, []);
 
   const height = 80;
-  const safeDuration = duration > 0 ? duration : 1;
+  // In splice mode the timeline is the OUTPUT sequence (kept segments
+  // concatenated), so its length is the sum of segment durations. Everything
+  // geometric (window, zoom, pan, tToX/xToT, playhead) runs over this
+  // effectiveDuration. Peak sampling still uses the raw source `duration`.
+  const seqDuration = spliceMode ? seqTotal(spliceSegments) : 0;
+  const effectiveDuration = spliceMode ? seqDuration : duration;
+  const safeDuration = effectiveDuration > 0 ? effectiveDuration : 1;
   const ZOOM_MAX = Math.max(1, safeDuration / MIN_VIEW);
 
   // Derived visible window. viewStart is read-clamped so a stale value after
@@ -360,10 +367,15 @@ export default function WaveformTimeline({
   const gap = 1;
   const barCount = Math.max(1, Math.floor(width / (barWidth + gap)));
   const bars: { x: number; h: number }[] = [];
+  const srcDuration = duration > 0 ? duration : 1;
   if (peaks.length > 0) {
     for (let i = 0; i < barCount; i++) {
       const tBar = viewStartC + (i / barCount) * viewDuration;
-      const peakIdx = Math.min(peaks.length - 1, Math.floor((tBar / safeDuration) * peaks.length));
+      // In splice mode tBar is a SEQUENCE second — map it back to the source
+      // time so the right slice of the waveform is sampled. Peaks always span
+      // the source, so index by the raw source duration.
+      const srcT = spliceMode ? seqToSource(spliceSegments, tBar).srcTime : tBar;
+      const peakIdx = Math.min(peaks.length - 1, Math.floor((srcT / srcDuration) * peaks.length));
       const v = peaks[peakIdx] ?? 0;
       const h = Math.max(1, v * height * 0.92);
       bars.push({ x: i * (barWidth + gap), h });
@@ -474,8 +486,10 @@ export default function WaveformTimeline({
             ))
           )}
 
-          {/* Mask the excluded regions so the selected segment pops. */}
-          {(() => {
+          {/* Mask the excluded regions so the selected segment pops.
+              Source-mode only — in splice mode the whole track IS the kept
+              output, nothing is masked. */}
+          {!spliceMode && (() => {
             const sx = clamp(startX, 0, width);
             const ex = clamp(endX, 0, width);
             return (
@@ -530,8 +544,8 @@ export default function WaveformTimeline({
             );
           })}
 
-          {/* Selected segment tint */}
-          {(() => {
+          {/* Selected segment tint (the in/out trim) — source mode only. */}
+          {!spliceMode && (() => {
             const sx = clamp(startX, 0, width);
             const ex = clamp(endX, 0, width);
             return <rect x={sx} y={0} width={Math.max(0, ex - sx)} height={height} fill="#6366f1" fillOpacity={0.12} pointerEvents="none" />;
@@ -553,31 +567,38 @@ export default function WaveformTimeline({
             );
           })()}
 
-          {/* Splice segments — numbered bands + boundary markers. Read-only;
-              editing happens in the SpliceStrip below the waveform. */}
-          {spliceMode && spliceSegments.map((seg, i) => {
-            const sx = tToX(seg.start);
-            const sxe = tToX(seg.end);
-            if (sxe < 0 || sx > width) return null;
-            const left = clamp(sx, 0, width);
-            const right = clamp(sxe, 0, width);
-            const bw = Math.max(0, right - left);
-            const selected = seg.id === selectedSpliceId;
-            return (
-              <g key={`seg-${seg.id}`} pointerEvents="none">
-                <rect
-                  x={left} y={0} width={bw} height={height}
-                  fill="#6366f1" fillOpacity={selected ? 0.28 : 0.12}
-                />
-                {onScreen(sx) && i > 0 && (
-                  <line x1={sx} x2={sx} y1={0} y2={height} stroke="#a5b4fc" strokeWidth={2} />
-                )}
-                {bw > 14 && (
-                  <text x={left + 4} y={14} fill="#c7d2fe" fontSize={11} fontWeight={700}>{i + 1}</text>
-                )}
-              </g>
-            );
-          })}
+          {/* Splice segments — numbered bands + dividers, positioned by their
+              SEQUENCE offset (output order), so deleted parts are gone and
+              reorders show in arrangement order. Read-only; editing is in the
+              SpliceStrip below. */}
+          {spliceMode && (() => {
+            const offsets = segOffsets(spliceSegments);
+            return spliceSegments.map((seg, i) => {
+              const segStartSeq = offsets[i];
+              const segEndSeq = segStartSeq + Math.max(0, seg.end - seg.start);
+              const sx = tToX(segStartSeq);
+              const sxe = tToX(segEndSeq);
+              if (sxe < 0 || sx > width) return null;
+              const left = clamp(sx, 0, width);
+              const right = clamp(sxe, 0, width);
+              const bw = Math.max(0, right - left);
+              const selected = seg.id === selectedSpliceId;
+              return (
+                <g key={`seg-${seg.id}`} pointerEvents="none">
+                  <rect
+                    x={left} y={0} width={bw} height={height}
+                    fill="#6366f1" fillOpacity={selected ? 0.28 : 0.12}
+                  />
+                  {onScreen(sx) && i > 0 && (
+                    <line x1={sx} x2={sx} y1={0} y2={height} stroke="#a5b4fc" strokeWidth={2} />
+                  )}
+                  {bw > 14 && (
+                    <text x={left + 4} y={14} fill="#c7d2fe" fontSize={11} fontWeight={700}>{i + 1}</text>
+                  )}
+                </g>
+              );
+            });
+          })()}
 
           {/* Playhead line */}
           {onScreen(playheadX) && (
@@ -643,25 +664,31 @@ export default function WaveformTimeline({
           );
         })}
 
-        {/* Start handle (clipped by overflow-hidden when off-window) */}
-        <div
-          onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "start" }); }}
-          className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group"
-          style={{ left: startX }}
-        >
-          <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-brand-400 group-hover:bg-brand-300" />
-          <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-3 h-6 bg-brand-500 rounded-sm shadow group-hover:bg-brand-400" />
-        </div>
+        {/* In/out trim handles — source mode only (splice has no single
+            in/out; the sequence spans the whole track). */}
+        {!spliceMode && (
+          <>
+            {/* Start handle (clipped by overflow-hidden when off-window) */}
+            <div
+              onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "start" }); }}
+              className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group"
+              style={{ left: startX }}
+            >
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-brand-400 group-hover:bg-brand-300" />
+              <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-3 h-6 bg-brand-500 rounded-sm shadow group-hover:bg-brand-400" />
+            </div>
 
-        {/* End handle */}
-        <div
-          onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "end" }); }}
-          className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group"
-          style={{ left: endX }}
-        >
-          <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-brand-400 group-hover:bg-brand-300" />
-          <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-3 h-6 bg-brand-500 rounded-sm shadow group-hover:bg-brand-400" />
-        </div>
+            {/* End handle */}
+            <div
+              onPointerDown={(e) => { e.stopPropagation(); setDrag({ kind: "end" }); }}
+              className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group"
+              style={{ left: endX }}
+            >
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-brand-400 group-hover:bg-brand-300" />
+              <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-3 h-6 bg-brand-500 rounded-sm shadow group-hover:bg-brand-400" />
+            </div>
+          </>
+        )}
 
         {/* Playhead grab */}
         {onScreen(playheadX) && (
@@ -760,7 +787,11 @@ export default function WaveformTimeline({
       <div className="flex justify-between mt-2 text-xs text-surface-500">
         <span>{formatDuration(viewStartC)}</span>
         <span>
-          Clip: <span className="text-white">{formatDuration(endTime - startTime)}</span>
+          {spliceMode ? (
+            <>Sequence: <span className="text-white">{formatDuration(effectiveDuration)}</span></>
+          ) : (
+            <>Clip: <span className="text-white">{formatDuration(endTime - startTime)}</span></>
+          )}
           {zoomClamped > 1 && <span className="text-surface-600"> · viewing {formatPreciseTime(viewDuration)}</span>}
         </span>
         <span>{formatDuration(viewEnd)}</span>

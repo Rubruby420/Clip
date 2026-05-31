@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, use } from "react";
+import { useEffect, useMemo, useRef, useState, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -14,6 +14,7 @@ import { DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG } from "@/lib/captions";
 import { formatDuration } from "@/lib/utils";
 import { detectTalkSegments, MIN_CUT } from "@/lib/silence";
+import { seqTotal, seqToSource, clampSeq } from "@/lib/splice";
 import { fileUrl } from "@/lib/file-urls";
 import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 
@@ -93,9 +94,18 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [tool, setTool] = useState<"scissors" | "splice">("scissors");
   const [spliceSegments, setSpliceSegments] = useState<Segment[] | null>(null);
   const [selectedSpliceId, setSelectedSpliceId] = useState<string | null>(null);
-  const [splicePreview, setSplicePreview] = useState(false);
   const [savedSpliceId, setSavedSpliceId] = useState<string | null>(null);
   const [savingSplice, setSavingSplice] = useState(false);
+
+  // Ordered ranges fed to the preview's sequence player. Memoized so its
+  // identity is stable across renders (otherwise CanvasPreview's reset effect
+  // would re-fire every render and pin playback at the first segment).
+  const playSequence = useMemo(
+    () => (tool === "splice" && spliceSegments && spliceSegments.length > 0
+      ? spliceSegments.map((s) => ({ start: s.start, end: s.end }))
+      : undefined),
+    [tool, spliceSegments],
+  );
 
   // Apply a fresh project payload to local state. Hoisted so the initial
   // load and the prep-poll loop both reuse it.
@@ -699,7 +709,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   function commitSegments(next: Segment[], label: string) {
     const prev = spliceSegments;
     setSpliceSegments(next);
-    setSplicePreview(false); // editing returns to raw-source scrubbing
+    // Keep the (sequence-time) playhead in range after the arrangement changes.
+    setCurrentTime((p) => clampSeq(next, p));
     if (savedSpliceId) void patchSegments(savedSpliceId, next);
     history.push({
       label,
@@ -709,28 +720,30 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   }
 
   // Seed a splice from the current in/out selection (defaults to whole source).
+  // In splice mode currentTime is SEQUENCE-time, so reset it to 0.
   function startSplice() {
     const start = outTime > inTime ? inTime : 0;
     const end = outTime > inTime ? outTime : duration;
     setSpliceSegments([{ id: crypto.randomUUID(), start, end }]);
     setSelectedSpliceId(null);
-    setSplicePreview(false);
+    setCurrentTime(0);
   }
 
-  // Divide the segment under the playhead into two at currentTime.
+  // Divide the segment under the playhead into two. currentTime is sequence-
+  // time, so map it to the underlying source time + active segment first.
   function addSplicePoint() {
     if (!spliceSegments) return;
-    const t = currentTime;
-    const idx = spliceSegments.findIndex((s) => t > s.start && t < s.end);
-    if (idx === -1) return;
-    const seg = spliceSegments[idx];
-    if (t - seg.start < MIN_CUT || seg.end - t < MIN_CUT) {
+    const total = seqTotal(spliceSegments);
+    if (currentTime <= 0 || currentTime >= total) return;
+    const { srcTime, segIndex } = seqToSource(spliceSegments, currentTime);
+    const seg = spliceSegments[segIndex];
+    if (srcTime - seg.start < MIN_CUT || seg.end - srcTime < MIN_CUT) {
       alert(`Move the playhead further from the segment edge — each piece needs at least ${MIN_CUT}s.`);
       return;
     }
-    const a: Segment = { id: crypto.randomUUID(), start: seg.start, end: t };
-    const b: Segment = { id: crypto.randomUUID(), start: t, end: seg.end };
-    commitSegments([...spliceSegments.slice(0, idx), a, b, ...spliceSegments.slice(idx + 1)], "splice point");
+    const a: Segment = { id: crypto.randomUUID(), start: seg.start, end: srcTime };
+    const b: Segment = { id: crypto.randomUUID(), start: srcTime, end: seg.end };
+    commitSegments([...spliceSegments.slice(0, segIndex), a, b, ...spliceSegments.slice(segIndex + 1)], "splice point");
   }
 
   function reorderSegment(from: number, to: number) {
@@ -741,10 +754,10 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     commitSegments(next, "reorder segment");
   }
 
-  function dropSegment(segId: string) {
+  function deleteSegment(segId: string) {
     if (!spliceSegments) return;
-    if (spliceSegments.length <= 1) { alert("A splice needs at least one segment."); return; }
-    commitSegments(spliceSegments.filter((s) => s.id !== segId), "drop segment");
+    if (spliceSegments.length <= 1) { alert("A splice needs at least one segment — can't delete the last part."); return; }
+    commitSegments(spliceSegments.filter((s) => s.id !== segId), "delete part");
   }
 
   // Save (or update) the spliced sequence as a single clip.
@@ -918,14 +931,14 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           {/* Tool toggle: Cut/mute vs Splice (separate tools). */}
           <div className="flex items-center rounded-lg border border-surface-600 overflow-hidden text-xs">
             <button
-              onClick={() => setTool("scissors")}
+              onClick={() => { setTool("scissors"); setCurrentTime(0); }}
               className={`px-3 py-1.5 font-medium transition-colors ${tool === "scissors" ? "bg-brand-600 text-white" : "text-surface-300 hover:bg-surface-700"}`}
               title="Cut / mute tool"
             >
               Cut
             </button>
             <button
-              onClick={() => { setTool("splice"); if (!spliceSegments) startSplice(); }}
+              onClick={() => { setTool("splice"); if (!spliceSegments) startSplice(); else setCurrentTime(0); }}
               className={`px-3 py-1.5 font-medium transition-colors ${tool === "splice" ? "bg-indigo-600 text-white" : "text-surface-300 hover:bg-surface-700"}`}
               title="Splice tool — break the track into reorderable segments"
             >
@@ -1100,13 +1113,9 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                   captionsEnabled
                   layout={DEFAULT_LAYOUT}
                   startTime={0}
-                  endTime={duration || 0}
+                  endTime={tool === "splice" && spliceSegments ? seqTotal(spliceSegments) : (duration || 0)}
                   skipRanges={tool === "splice" ? undefined : mutedRanges}
-                  playSequence={
-                    tool === "splice" && splicePreview && spliceSegments
-                      ? spliceSegments.map((s) => ({ start: s.start, end: s.end }))
-                      : undefined
-                  }
+                  playSequence={playSequence}
                 />
                 {duration === 0 && (
                   <div className="absolute inset-0 rounded-xl bg-surface-900/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 px-6 text-center pointer-events-none">
@@ -1172,9 +1181,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                 segments={spliceSegments}
                 selectedId={selectedSpliceId}
                 onReorder={reorderSegment}
-                onDrop={dropSegment}
+                onDelete={deleteSegment}
                 onSelect={(id) => setSelectedSpliceId((cur) => (cur === id ? null : id))}
-                onPreview={() => setSplicePreview((p) => !p)}
               />
             )
             : (

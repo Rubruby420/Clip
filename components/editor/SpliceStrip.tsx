@@ -1,22 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { GripVertical, X, Play } from "lucide-react";
+import { GripVertical, Trash2 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
+import type { Segment } from "@/lib/splice";
 
-export interface Segment {
-  id: string;
-  start: number;
-  end: number;
-}
+export type { Segment };
 
 interface Props {
   segments: Segment[];
   selectedId: string | null;
   onReorder: (from: number, to: number) => void;
-  onDrop: (id: string) => void;
+  onDelete: (id: string) => void;
   onSelect: (id: string) => void;
-  onPreview?: () => void;
 }
 
 // Ordered, reorderable strip of splice segments shown below the waveform.
@@ -24,7 +20,7 @@ interface Props {
 // Drag a block to reorder (native HTML5 DnD), ✕ to drop it, click to select
 // (highlights it on the waveform).
 export default function SpliceStrip({
-  segments, selectedId, onReorder, onDrop, onSelect, onPreview,
+  segments, selectedId, onReorder, onDelete, onSelect,
 }: Props) {
   const dragFrom = useRef<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
@@ -46,16 +42,7 @@ export default function SpliceStrip({
         <span className="text-xs text-surface-500 uppercase tracking-wider">
           Sequence ({segments.length}) · {formatDuration(total)}
         </span>
-        {onPreview && (
-          <button
-            type="button"
-            onClick={onPreview}
-            className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium transition-colors"
-            title="Preview the arranged sequence"
-          >
-            <Play className="w-3 h-3" /> Preview order
-          </button>
-        )}
+        <span className="text-[11px] text-surface-600">— 🗑 deletes a part from the exported video</span>
       </div>
 
       <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
@@ -90,11 +77,16 @@ export default function SpliceStrip({
                 <span className="text-[11px] font-bold text-indigo-300">#{i + 1}</span>
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onDrop(seg.id); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm("Delete this part of the video? It won't appear in the exported clip. You can undo with Ctrl+Z.")) {
+                      onDelete(seg.id);
+                    }
+                  }}
                   className="ml-auto text-surface-500 hover:text-red-400 transition-colors"
-                  title="Drop this segment"
+                  title="Delete this part — permanently removed from the final video"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
               <p className="text-[10px] text-surface-300 tabular-nums leading-tight">
