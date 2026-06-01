@@ -8,37 +8,133 @@ import { formatFileSize } from "@/lib/utils";
 
 type UploadPhase = "idle" | "uploading" | "uploaded" | "error";
 
-/** Single streaming PUT to /api/upload. Returns the new projectId. */
-function uploadFile(
-  file: File,
-  title: string,
-  onProgress: (loaded: number, total: number) => void
-): Promise<{ projectId: string }> {
+// Chunked, resumable upload. Multi-GB recordings used to go up as one ~5-minute
+// PUT; if the connection so much as hiccuped the whole thing failed and showed a
+// misleading "OneDrive" error. Instead we send the file in fixed-size pieces the
+// server appends in order, with per-chunk retry + byte-exact resume, so a dropped
+// connection just continues from where it left off. Designed for 12GB+ files.
+const CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB
+const MAX_CHUNK_RETRIES = 5;
+const RESUME_KEY = "clip:pendingUpload";
+
+interface ResumeRecord { projectId: string; name: string; size: number }
+
+function readResume(file: File): string | null {
+  try {
+    const raw = localStorage.getItem(RESUME_KEY);
+    if (!raw) return null;
+    const r = JSON.parse(raw) as ResumeRecord;
+    return r.name === file.name && r.size === file.size ? r.projectId : null;
+  } catch { return null; }
+}
+function writeResume(rec: ResumeRecord) {
+  try { localStorage.setItem(RESUME_KEY, JSON.stringify(rec)); } catch {}
+}
+function clearResume() {
+  try { localStorage.removeItem(RESUME_KEY); } catch {}
+}
+
+async function getReceived(projectId: string): Promise<number> {
+  const res = await fetch(`/api/upload/${projectId}`);
+  if (!res.ok) throw new Error("session-gone");
+  return (await res.json()).received as number;
+}
+
+// PUT one chunk. Resolves with the server's authoritative byte count; for a 409
+// (offset disagreement) it resolves with the server's count so the caller
+// resyncs rather than treating it as fatal.
+function putChunk(
+  projectId: string,
+  offset: number,
+  blob: Blob,
+  onLoaded: (loaded: number) => void,
+): Promise<number> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
-    const qs = new URLSearchParams({ ext, title });
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded, e.total);
-    };
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onLoaded(offset + e.loaded); };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); }
-        catch { reject(new Error("Server returned invalid JSON")); }
+        try { resolve(JSON.parse(xhr.responseText).received as number); }
+        catch { resolve(offset + blob.size); }
+      } else if (xhr.status === 409) {
+        try { resolve(JSON.parse(xhr.responseText).received as number); }
+        catch { reject(new Error("offset mismatch")); }
       } else {
-        let msg = `Upload failed (HTTP ${xhr.status})`;
+        let msg = `chunk failed (HTTP ${xhr.status})`;
         try { msg = JSON.parse(xhr.responseText).error ?? msg; } catch {}
         reject(new Error(msg));
       }
     };
-    xhr.onerror = () => reject(new Error(
-      "Upload failed mid-stream. If the file is in a OneDrive folder, " +
-      "OneDrive may have touched it — move it to D:\\ or C:\\Users\\tania\\Videos\\ and try again."
-    ));
-    xhr.open("PUT", `/api/upload?${qs.toString()}`);
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-    xhr.send(file);
+    xhr.onerror = () => reject(new Error("network drop"));
+    xhr.ontimeout = () => reject(new Error("chunk timed out"));
+    xhr.open("PUT", `/api/upload/${projectId}?offset=${offset}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.send(blob);
   });
+}
+
+async function uploadFile(
+  file: File,
+  title: string,
+  onProgress: (loaded: number, total: number) => void,
+): Promise<{ projectId: string }> {
+  const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+  const total = file.size;
+
+  // Reuse an in-progress session for this exact file if one survived a reload.
+  let projectId = readResume(file);
+  if (projectId) {
+    try { await getReceived(projectId); } catch { projectId = null; }
+  }
+  if (!projectId) {
+    const res = await fetch("/api/upload/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ext, title, size: total }),
+    });
+    if (!res.ok) throw new Error("Couldn't start the upload — is the app still running?");
+    projectId = (await res.json()).projectId as string;
+    writeResume({ projectId, name: file.name, size: total });
+  }
+
+  let offset = await getReceived(projectId).catch(() => 0);
+
+  while (offset < total) {
+    const end = Math.min(offset + CHUNK_SIZE, total);
+    const blob = file.slice(offset, end);
+    let attempt = 0;
+    for (;;) {
+      try {
+        offset = await putChunk(projectId, offset, blob, (loaded) => onProgress(loaded, total));
+        break;
+      } catch (err) {
+        attempt++;
+        if (attempt >= MAX_CHUNK_RETRIES) {
+          throw new Error(
+            `Upload stalled at ${(offset / 1e9).toFixed(2)} GB of ${(total / 1e9).toFixed(2)} GB ` +
+            `after ${MAX_CHUNK_RETRIES} retries (${err instanceof Error ? err.message : "unknown"}). ` +
+            `Your progress is saved — click upload again to resume.`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 1000 * attempt)); // backoff
+        // Resync to the server's true byte count before retrying this chunk.
+        try { offset = await getReceived(projectId); } catch {}
+      }
+    }
+  }
+
+  const res = await fetch(`/api/upload/${projectId}/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ size: total }),
+  });
+  if (!res.ok) {
+    let msg = "Couldn't finalize the upload.";
+    try { msg = (await res.json()).error ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  clearResume();
+  return { projectId };
 }
 
 export default function UploadPage() {
