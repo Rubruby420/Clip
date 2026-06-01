@@ -54,7 +54,7 @@ app/
     clips/[id]/coach            Virality Coach — readiness check + reference videos
     export/[id]                 FFmpeg render — writes export.mp4 into the clip folder
 components/editor/              Timeline, CanvasPreview, CaptionPanel, LayoutPanel,
-                                RemixPanel, StoryPanel, CoachPanel
+                                RemixPanel, StoryPanel, CoachPanel, ClipGroups
 lib/
   db.ts          Prisma client singleton
   storage.ts     Local-storage paths, traversal guard, fileUrl/downloadUrl helpers
@@ -125,6 +125,14 @@ Other commands: `npm run build`, `npm run db:studio`.
 - **The AI pipeline (`api/process/[id]`) runs async** — the route returns immediately and
   processing continues in the background, flipping `Project.status` through
   `processing -> ready` (or `error`). The UI polls.
+- **The 720p proxy is built LAST and never blocks clip detection.** It used to run
+  before clips, so a huge 4K source (a 15 GB DJI upload) whose proxy encode never
+  finished wedged the whole "Detecting your clips" screen. Now the pipeline flips the
+  project to `ready` as soon as clips exist, then builds the proxy via `finishWithProxy()`.
+  `lib/ffmpeg.generatePreviewProxy` spawns ffmpeg directly (NOT through `exec`/`cmd.exe`,
+  which on Windows can orphan the child when killed) and `SIGKILL`s it after a hard 8-min
+  timeout. If the proxy fails/times out it's non-fatal — the editor falls back to the
+  original video. Same timeout protects the on-demand `api/projects/[id]/proxy` route.
 - **Highlight detection has a two-tier fallback.** AssemblyAI auto-chapters run first;
   if they error or return nothing, `lib/highlights.ts` (`gpt-4o-mini`) detects highlights
   from the Whisper transcript with real titles. Fixed 60s "Clip N" segments are only a
@@ -202,26 +210,52 @@ Other commands: `npm run build`, `npm run db:studio`.
   a "needs work" badge on the project page. The Coach tab shows the critique; for weak
   clips it also pulls reference viral videos via the Remix/YouTube helpers (POST does
   evaluation + video fetch; the import auto-check stores the report only).
+- **Multi-Playlist Clips** (`components/editor/ClipGroups.tsx`, used in the source
+  editor sidebar `app/source/[id]/page.tsx`): the "Clips in this project" list
+  auto-organizes into collapsible groups of 12, labeled A, B, C… (then AA, AB… after Z,
+  spreadsheet-style). Headers read "{Letter} Clips {start}-{end}" (e.g. "B Clips 13-24").
+  Numbering is global/continuous (Clip 1..N) in **creation order** — the source page sorts
+  a copy of `project.clips` by `createdAt` asc and passes it in (the API still returns them
+  score-desc; the waveform's `savedClips` keep that order). Groups are derived by chunking,
+  so deleting a clip rebalances automatically. Collapsed by default; per-group collapse
+  state is keyed by letter and persisted to `localStorage["clipGroups:open:<projectId>"]`
+  (loaded in a post-mount effect to avoid a hydration mismatch). Pure UI/derived — no DB.
+- **Inline title rename** (source editor): a pencil next to the video/project title in the
+  header and next to every clip row in the groups. Click → text field → Enter (or blur)
+  saves, Escape cancels. `ClipGroups` owns the edit-field UI and calls an `onRenameClip`
+  prop; the source page does optimistic local update + `PATCH /api/clips/[id]` (clip) or
+  `PATCH /api/projects/[id]` (title). Enter is routed through `.blur()` so it commits once.
+  No API changes — both PATCH routes already accept `{ title }`.
 
-## Status (last session, 2026-05-26)
+## Status (last session, 2026-05-31)
 
-**Storage migrated from Cloudflare R2 to local disk (`D:\clip`).** All upload,
-process, proxy, waveform, finalize, export, voiceover, and project-delete code
-paths now read/write disk via `lib/storage.ts`. R2 code is fully removed; the
-`@aws-sdk/*` packages were uninstalled. Spec + plan live in
-`docs/superpowers/{specs,plans}/2026-05-26-*`.
+This session shipped three things, all on `main`:
+
+- **Fixed the pipeline hang** — the 720p proxy encode no longer blocks clip detection
+  and is hard-timeout-bounded (see the proxy gotcha above). Surfaced by a real 15 GB /
+  31-min 4K DJI upload that froze on "Detecting your clips".
+- **Multi-Playlist Clips** — collapsible A–Z groups of 12 in the source editor sidebar
+  (see feature bullet above).
+- **Inline title rename** — pencil-edit the video title and every clip title in the
+  source editor (see feature bullet above).
+
+Also added a **`swap`** PowerShell command (in the user's profile) that runs
+`switch.ps1` from any folder for the Cursor↔Antigravity editor handoff.
 
 - **All planned AI features still in place** — Viral Remix, AI Auto-Cut, Story
   Mode, Virality Coach, Smart Import.
 - **Database** — `C:/Users/tania/ClipData/dev.db` (outside OneDrive — never
   move it back).
-- **App is a clean slate.** No projects in the DB. Upload a fresh video to
-  exercise the new local-storage pipeline end-to-end.
+- **DB contents** — one project, `DJI_20260527203440_0543_D` (status `ready`).
+  The earlier debugging/demo projects were deleted.
+- **Storage migration (R2 → local `D:\clip`) is complete** and was the previous
+  session's work; spec/plan in `docs/superpowers/{specs,plans}/2026-05-26-*`.
 
 ### Next session
-- Run the full AI flow on a real video to verify the migration in practice
-  (upload → process → edit → export → download → delete).
-- After the smoke test passes, the Cloudflare R2 bucket can be deleted.
+- Still pending: a full end-to-end smoke test of the local-storage pipeline on a
+  **talking** video (upload → process → edit → export → download → delete). The DJI
+  drone clips exercise manual mode but produce little, since the app targets speech.
+- After the smoke test passes, the old Cloudflare R2 bucket can be deleted.
 
 ## Editors / IDEs
 
