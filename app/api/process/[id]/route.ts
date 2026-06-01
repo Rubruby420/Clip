@@ -51,6 +51,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const audioPath = tmpPath(`${id}.mp3`);
     const proxyPath = tmpPath(`${id}_proxy.mp4`);
 
+    // Flip the project to "ready" as soon as clips exist, THEN build the
+    // optional 720p editor proxy. The proxy runs LAST and is hard-timeout-
+    // bounded (lib/ffmpeg.generatePreviewProxy), so a slow/huge 4K source can
+    // never wedge the pipeline the way a 15 GB DJI upload once did — the editor
+    // just falls back to the original URL if the proxy never lands.
+    const finishWithProxy = async () => {
+      await db.project.update({ where: { id }, data: { status: "ready" } });
+      try {
+        await generatePreviewProxy(videoPath, proxyPath);
+        if (fs.existsSync(proxyPath)) {
+          const proxyRel = projectProxyPath(id);
+          const proxyAbs = resolveStorage(proxyRel);
+          await ensureDirFor(proxyAbs);
+          await fsp.copyFile(proxyPath, proxyAbs);
+          await db.project.update({
+            where: { id },
+            data: { proxyUrl: proxyRel, proxyKey: proxyRel },
+          });
+        }
+      } catch (err) {
+        console.error("Proxy generation failed (non-fatal):", err);
+      }
+    };
+
     try {
 
       // 1a. Probe the source duration up front so the /source editor can
@@ -92,24 +116,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         console.error("Waveform generation failed (non-fatal):", err);
       }
 
-      // 2b. Generate a 720p proxy mp4 for smooth editor playback (4K sources
-      //     stutter when decoded for the small preview). Failure here is
-      //     non-fatal — the editor falls back to the original URL.
-      try {
-        await generatePreviewProxy(videoPath, proxyPath);
-        if (fs.existsSync(proxyPath)) {
-          const proxyRel = projectProxyPath(id);
-          const proxyAbs = resolveStorage(proxyRel);
-          await ensureDirFor(proxyAbs);
-          await fsp.copyFile(proxyPath, proxyAbs);
-          await db.project.update({
-            where: { id },
-            data: { proxyUrl: proxyRel, proxyKey: proxyRel },
-          });
-        }
-      } catch (err) {
-        console.error("Proxy generation failed (non-fatal):", err);
-      }
+      // (720p proxy generation moved to finishWithProxy(), run AFTER clips
+      //  are created so it can never block clip detection — see above.)
 
       // 3. Manual mode: no Whisper/LLM/Coach, but we DO detect talking
       //    segments from the waveform here (server-side) and create one clip
@@ -147,7 +155,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         } catch (err) {
           console.error("Manual clip detection failed (non-fatal):", err);
         }
-        await db.project.update({ where: { id }, data: { status: "ready" } });
+        await finishWithProxy();
         return;
       }
 
@@ -255,7 +263,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       }
 
-      await db.project.update({ where: { id }, data: { status: "ready" } });
+      await finishWithProxy();
     } catch (err) {
       console.error("Processing error:", err);
       await db.project.update({ where: { id }, data: { status: "error" } }).catch(() => null);

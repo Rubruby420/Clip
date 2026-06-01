@@ -39,15 +39,55 @@ export async function extractAudioSegment(
 
 // 720p H.264 mp4 used by the editor preview so 4K sources don't crush
 // playback. Export reads the original instead, so final quality is
-// untouched. veryfast/crf 26 keeps the encode time tolerable for long
-// 4K sources; faststart lets the browser stream before the file is fully
-// downloaded.
-export async function generatePreviewProxy(videoPath: string, outputPath: string): Promise<void> {
+// untouched. ultrafast/crf 26 keeps the encode cheap; faststart lets the
+// browser stream before the file is fully downloaded.
+//
+// HARD TIMEOUT: a huge 4K source (e.g. a 15 GB DJI file) can make this encode
+// effectively never finish, and it once wedged the whole processing pipeline.
+// We spawn ffmpeg directly (NOT via exec/cmd.exe, which on Windows can orphan
+// the child when killed) and SIGKILL it after `timeoutMs`. Callers treat a
+// rejection as non-fatal and fall back to the original video.
+export async function generatePreviewProxy(
+  videoPath: string,
+  outputPath: string,
+  timeoutMs: number = 8 * 60 * 1000,
+): Promise<void> {
   const bin = ffmpegBin();
-  await execAsync(
-    `"${bin}" -y -i "${videoPath}" -vf "scale=-2:720" -c:v libx264 -preset veryfast -crf 26 -c:a aac -b:a 128k -movflags +faststart "${outputPath}"`,
-    { maxBuffer: 1024 * 1024 * 50 }
-  );
+  const args = [
+    "-y",
+    "-i", videoPath,
+    "-vf", "scale=-2:720",
+    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(bin, args, { windowsHide: true });
+    let timedOut = false;
+    let stderrTail = "";
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stderr?.on("data", (d) => {
+      stderrTail = (stderrTail + d.toString()).slice(-2000);
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`Proxy encode timed out after ${Math.round(timeoutMs / 1000)}s`));
+      } else if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg proxy exited with code ${code}: ${stderrTail.slice(-400)}`));
+      }
+    });
+  });
 }
 
 export async function extractThumbnail(
