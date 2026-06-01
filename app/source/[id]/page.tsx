@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, Zap, Loader2, Film, AudioLines, Scissors, CheckCircle2, Sparkles, X,
+  ArrowLeft, Zap, Loader2, Film, AudioLines, Scissors, CheckCircle2, Sparkles, X, Pencil,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
@@ -113,6 +113,39 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     () => [...(project?.clips ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     [project?.clips],
   );
+
+  // Inline rename — video (project) title in the header. Enter/blur saves,
+  // Escape cancels. titleEscRef lets the blur handler tell an Escape-triggered
+  // blur apart from a normal save-on-blur.
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const titleEscRef = useRef(false);
+
+  async function commitProjectTitle() {
+    const title = titleDraft.trim();
+    setEditingTitle(false);
+    if (project && title && title !== project.title) {
+      setProject((prev) => (prev ? { ...prev, title } : prev));
+      await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      }).catch(() => {});
+    }
+  }
+
+  // Inline rename — a clip's title from the sidebar groups. Optimistic local
+  // update + PATCH; ClipGroups owns the edit-field UI.
+  async function renameClip(clipId: string, title: string) {
+    setProject((prev) =>
+      prev ? { ...prev, clips: prev.clips.map((c) => (c.id === clipId ? { ...c, title } : c)) } : prev,
+    );
+    await fetch(`/api/clips/${clipId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }).catch(() => {});
+  }
 
   // Apply a fresh project payload to local state. Hoisted so the initial
   // load and the prep-poll loop both reuse it.
@@ -907,7 +940,36 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           <span className="text-white text-sm font-bold">Source</span>
         </div>
         <span className="text-surface-500 text-sm">/</span>
-        <span className="text-white text-sm font-medium truncate max-w-[280px]">{project.title}</span>
+        {editingTitle ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+              else if (e.key === "Escape") { titleEscRef.current = true; e.currentTarget.blur(); }
+            }}
+            onBlur={() => {
+              if (titleEscRef.current) { titleEscRef.current = false; setEditingTitle(false); return; }
+              commitProjectTitle();
+            }}
+            className="bg-surface-900 border border-brand-600 focus:border-brand-400 rounded px-2 py-0.5 text-white text-sm outline-none max-w-[280px]"
+            aria-label="Video title"
+          />
+        ) : (
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="text-white text-sm font-medium truncate max-w-[280px]">{project.title}</span>
+            <button
+              type="button"
+              onClick={() => { setTitleDraft(project.title); setEditingTitle(true); }}
+              className="shrink-0 text-surface-500 hover:text-brand-300 transition-colors"
+              title="Rename video"
+              aria-label="Rename video"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <UndoRedoButtons
@@ -1050,7 +1112,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                 then click <span className="text-brand-300">Save as new clip</span>.
               </p>
             ) : (
-              <ClipGroups projectId={project.id} clips={orderedClips} />
+              <ClipGroups projectId={project.id} clips={orderedClips} onRenameClip={renameClip} />
             )}
           </div>
         </aside>
