@@ -151,12 +151,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
             <div>
               <p className="text-white font-semibold text-lg">
-                {project.clips.length > 0 ? "Coach is scoring your clips" : "Preparing your project"}
+                {project.clips.length > 0 ? "Coach is scoring your clips" : "Detecting your clips"}
               </p>
               <p className="text-surface-500 text-sm mt-1">
                 {project.clips.length > 0
                   ? "Transcribing each clip and grading it for virality. Scores will appear below as they finish."
-                  : "Rendering a 720p preview and building the waveform for the editor…"}
+                  : "Building the waveform and detecting the talking parts of your video. Your clips will appear here as they're cut…"}
               </p>
             </div>
           </div>

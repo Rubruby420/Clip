@@ -68,24 +68,11 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // upgrade button in the status banner.
   const [pendingProxyUrl, setPendingProxyUrl] = useState<string | null>(null);
 
-  // Auto-cut state.
-  //  - autoCutRan: guards against re-running when the user manually
-  //    deletes all the auto clips (we honour their reset by not
-  //    repopulating).
-  //  - autoCutting: in flight, blocks duplicate runs and shows a banner.
-  //  - autoCutIds: the clip IDs created by the most recent auto-cut so
-  //    Undo can wipe just those (not any clips the user added later).
-  const [autoCutRan, setAutoCutRan] = useState(false);
-  const [autoCutting, setAutoCutting] = useState(false);
-  const [autoCutIds, setAutoCutIds] = useState<string[]>([]);
-  const [autoCutError, setAutoCutError] = useState<string | null>(null);
-
   // Undo/redo. Every action on this surface writes to the DB immediately, so
   // each command's undo fires a *reversing* server request (delete a created
   // clip, PATCH a mute back, re-merge a split). Commands that recreate a clip
   // get a new id from the server, so they track the live id in their closure
-  // and remap it on each redo. Auto-cut is intentionally NOT on the stack — it
-  // is an automatic import step with its own dedicated "Undo auto-cut" button.
+  // and remap it on each redo.
   const history = useUndoRedo();
   useUndoRedoShortcuts(history.undo, history.redo);
   const byStart = (a: SavedClip, b: SavedClip) => a.startTime - b.startTime;
@@ -256,66 +243,9 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, hasProxy, peaks.length, generatingProxy, generatingWaveform]);
 
-  // Auto-cut on first load. Fires once peaks + duration are ready, the
-  // project has zero saved clips, and we haven't already attempted this.
-  // Creates one clip per talking segment via the same POST /clips route
-  // the manual Save button uses — keeps clip creation single-pathed.
-  useEffect(() => {
-    if (!project) return;
-    if (autoCutRan || autoCutting) return;
-    if (peaks.length === 0 || duration <= 0) return;
-    if (project.clips.length > 0) {
-      // Project already has clips — don't auto-cut over them. Mark as
-      // ran so a future deletion doesn't trigger this either.
-      setAutoCutRan(true);
-      return;
-    }
-
-    const segments = detectTalkSegments(peaks, duration);
-    setAutoCutRan(true);
-    if (segments.length === 0) {
-      // No detected talk — leave the manual flow intact.
-      return;
-    }
-
-    (async () => {
-      setAutoCutting(true);
-      setAutoCutError(null);
-      const createdIds: string[] = [];
-      try {
-        for (const seg of segments) {
-          const res = await fetch(`/api/projects/${id}/clips`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startTime: seg.start, endTime: seg.end }),
-          });
-          if (!res.ok) continue;
-          const { clip } = await res.json() as { clip: SavedClip };
-          createdIds.push(clip.id);
-          setProject((prev) => prev ? { ...prev, clips: [...prev.clips, clip] } : prev);
-        }
-        setAutoCutIds(createdIds);
-      } catch {
-        setAutoCutError("Auto-cut hit a snag — you can still cut manually.");
-      } finally {
-        setAutoCutting(false);
-      }
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, peaks.length, duration, autoCutRan, autoCutting]);
-
-  // Wipe the auto-generated clips so the user can cut manually if the AI
-  // got it wrong. Only deletes the IDs we created in this session — any
-  // clips the user added after auto-cut survive.
-  async function handleUndoAutoCut() {
-    if (autoCutIds.length === 0) return;
-    const ids = autoCutIds;
-    setAutoCutIds([]);
-    setProject((prev) => prev ? { ...prev, clips: prev.clips.filter((c) => !ids.includes(c.id)) } : prev);
-    await Promise.all(
-      ids.map((cid) => fetch(`/api/clips/${cid}`, { method: "DELETE" }).catch(() => null)),
-    );
-  }
+  // Talk-segment detection now runs server-side during processing (clips
+  // land on the project grid), so the editor no longer auto-cuts on load —
+  // it opens with the project's existing clips and is a pure editing surface.
 
   async function handleGenerateProxy() {
     if (!project) return;
@@ -1041,44 +971,6 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           )}
         </div>
       </header>
-
-      {project && autoCutting && (
-        <div className="shrink-0 px-4 py-2 bg-brand-900/30 border-b border-brand-800/60 flex items-center gap-2 text-xs text-brand-100">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-300 shrink-0" />
-          <span className="flex-1">
-            Auto-cutting silence — building one clip per talking segment. Each shows up in the sidebar as it&apos;s saved.
-          </span>
-        </div>
-      )}
-
-      {project && !autoCutting && autoCutIds.length > 0 && (
-        <div className="shrink-0 px-4 py-2 bg-green-900/30 border-b border-green-800/60 flex items-center gap-2 text-xs text-green-100">
-          <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
-          <span className="flex-1">
-            Auto-cut <span className="font-semibold">{autoCutIds.length}</span> talking segment{autoCutIds.length === 1 ? "" : "s"}. Each is highlighted on the timeline and listed on the left — review or open any one to fine-tune.
-          </span>
-          <button
-            onClick={handleRemoveSilences}
-            className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold transition-colors"
-            title="Drop every silent gap and stitch the talking parts into one clean clip"
-          >
-            Remove all silence → one clip
-          </button>
-          <button
-            onClick={handleUndoAutoCut}
-            className="px-2.5 py-1 rounded-md border border-green-600 text-green-200 hover:bg-green-800/40 text-[11px] font-semibold transition-colors"
-            title="Delete the auto-generated clips so you can cut manually instead"
-          >
-            Undo auto-cut
-          </button>
-        </div>
-      )}
-
-      {project && autoCutError && (
-        <div className="shrink-0 px-4 py-2 bg-orange-900/30 border-b border-orange-800/60 text-xs text-orange-200">
-          {autoCutError}
-        </div>
-      )}
 
       {project && pendingProxyUrl && videoSrc !== pendingProxyUrl && (
         <div className="shrink-0 px-4 py-2 bg-green-900/30 border-b border-green-800/60 flex items-center gap-2 text-xs text-green-200">

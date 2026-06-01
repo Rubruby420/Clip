@@ -185,7 +185,7 @@ export default function UploadPage() {
         (loaded, total) => setProgress(Math.min(99, Math.round((loaded / total) * 100))),
       );
 
-      setStatusText(mode === "manual" ? "Upload complete! Preparing source…" : "Upload complete! Starting AI…");
+      setStatusText(mode === "manual" ? "Upload complete! Detecting clips…" : "Upload complete! Starting AI…");
       setProgress(100);
       setPhase("uploaded");
 
@@ -195,11 +195,12 @@ export default function UploadPage() {
         body: JSON.stringify({ mode, smartImport, minLen, maxLen }),
       });
 
-      // Manual mode drops the user straight into the source editor; the
-      // editor polls for waveform + proxy as light prep finishes. AI mode
-      // goes to the project page where the clip grid populates as the
-      // pipeline runs.
-      const dest = mode === "manual" ? `/source/${projectId}` : `/projects/${projectId}`;
+      // Both modes go to the project page (the clips grid). Manual mode now
+      // detects talking-segment clips server-side during processing, so the
+      // grid is the dedicated clips screen — it polls and fills in clips +
+      // thumbnails as prep finishes. The source editor is reached per-clip
+      // (Edit Clip) or via "Make more clips" from the grid.
+      const dest = `/projects/${projectId}`;
       setTimeout(() => router.push(dest), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -233,7 +234,7 @@ export default function UploadPage() {
               <h2 className="text-2xl font-bold text-white mb-1">Upload complete!</h2>
               <p className="text-surface-500">
                 {mode === "manual"
-                  ? "Opening the source editor — you'll cut clips by hand."
+                  ? "Detecting clips from your audio — opening your clips…"
                   : "AI is now finding your best moments…"}
               </p>
             </div>
