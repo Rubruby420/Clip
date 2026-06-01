@@ -130,9 +130,27 @@ Other commands: `npm run build`, `npm run db:studio`.
   finished wedged the whole "Detecting your clips" screen. Now the pipeline flips the
   project to `ready` as soon as clips exist, then builds the proxy via `finishWithProxy()`.
   `lib/ffmpeg.generatePreviewProxy` spawns ffmpeg directly (NOT through `exec`/`cmd.exe`,
-  which on Windows can orphan the child when killed) and `SIGKILL`s it after a hard 8-min
-  timeout. If the proxy fails/times out it's non-fatal — the editor falls back to the
-  original video. Same timeout protects the on-demand `api/projects/[id]/proxy` route.
+  which on Windows can orphan the child when killed) and `SIGKILL`s it after a timeout
+  (8-min default in the pipeline). If the proxy fails/times out it's non-fatal — the editor
+  falls back to the original video.
+- **The proxy encode is GPU-assisted (`-hwaccel auto`) and outputs 720p/30fps/8-bit.**
+  The bottleneck on big sources is *decoding* (phone/drone 4K is often 10-bit HEVC at
+  60fps); `-hwaccel auto` offloads decode to the GPU (dxva2/d3d11va/cuda/qsv) and falls
+  back to software if none works. Pure-CPU decode of such files stalls at ~0 bytes and
+  just times out. **Hardware reality on this machine (Intel Iris Xe iGPU):** a 4K/60fps
+  10-bit source still only encodes at ~0.6x real-time, because the decoded frames must be
+  copied off the iGPU for the CPU scale/encode. A full on-GPU pipeline (`vpp_qsv`/
+  `scale_qsv` + `h264_qsv`) would be far faster but is **broken in the bundled
+  `ffmpeg-static`** (filter "Failed to inject frame" / decode errors) — don't rely on it.
+- **"Smoother preview" (`api/projects/[id]/proxy`) is a non-blocking background job.**
+  Because a long 4K proxy can take tens of minutes, the POST kicks off the encode and
+  returns immediately (`{ status: "started" | "running" | "ready" }`); an in-process
+  `Set` guards against duplicate encodes; the encode has a 90-min cap. The source editor
+  (`app/source/[id]/page.tsx`) keeps playing the original and polls `GET /api/projects/[id]`
+  until `proxyUrl` lands, then swaps the preview in. The prep progress bar is a *time
+  estimate* (no real ffmpeg progress is piped), budgeted at ~1.5x source duration; it had
+  a bug where manual generation nulled `prepStartedAt` and froze the bar at 0% — fixed by
+  anchoring to `Date.now()` and adding the generating flags to the estimate effect's deps.
 - **Highlight detection has a two-tier fallback.** AssemblyAI auto-chapters run first;
   if they error or return nothing, `lib/highlights.ts` (`gpt-4o-mini`) detects highlights
   from the Whisper transcript with real titles. Fixed 60s "Clip N" segments are only a
@@ -226,10 +244,17 @@ Other commands: `npm run build`, `npm run db:studio`.
   prop; the source page does optimistic local update + `PATCH /api/clips/[id]` (clip) or
   `PATCH /api/projects/[id]` (title). Enter is routed through `.blur()` so it commits once.
   No API changes — both PATCH routes already accept `{ title }`.
+- **Fullscreen toggle** (`components/editor/CanvasPreview.tsx`): a maximize/minimize button
+  in the preview's bottom control bar fullscreens the **composed preview container** (so
+  captions + hook/beat overlays show too, with the `object-contain` video letterboxed) via
+  the Fullscreen API. An internal `containerRef` is merged with the forwarded `ref`;
+  `isFullscreen` mirrors `document.fullscreenElement` (so the icon is right even on Esc);
+  when fullscreen the root div swaps its aspect-box classes for `w-screen h-screen
+  rounded-none`. Shared component, so it shows on the source, clip, and beta editors.
 
 ## Status (last session, 2026-05-31)
 
-This session shipped three things, all on `main`:
+Recent work, all on `main`:
 
 - **Fixed the pipeline hang** — the 720p proxy encode no longer blocks clip detection
   and is hard-timeout-bounded (see the proxy gotcha above). Surfaced by a real 15 GB /
@@ -238,6 +263,11 @@ This session shipped three things, all on `main`:
   (see feature bullet above).
 - **Inline title rename** — pencil-edit the video title and every clip title in the
   source editor (see feature bullet above).
+- **Fullscreen toggle** on the video preview, and **proxy overhaul** — GPU-assisted
+  decode + a non-blocking background "Smoother preview" job that the source editor polls
+  for and swaps in, plus a fix for the progress bar freezing at 0% (see gotchas/feature
+  bullets above). Confirmed the 4K/60fps proxy ceiling on the Iris Xe iGPU is ~0.6x
+  real-time (~45–55 min for a 32-min clip); acceptable now that it's a background job.
 
 Also added a **`swap`** PowerShell command (in the user's profile) that runs
 `switch.ps1` from any folder for the Cursor↔Antigravity editor handoff.
