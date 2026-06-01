@@ -263,7 +263,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     tick();
     const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
-  }, [prepPending, peaks.length, hasProxy, duration]);
+  }, [prepPending, peaks.length, hasProxy, duration, generatingProxy, generatingWaveform]);
   useEffect(() => {
     if (hasProxy && peaks.length > 0) return;
     if (generatingProxy || generatingWaveform) return;
@@ -296,8 +296,9 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     if (!project) return;
     // Re-anchor the prep progress bar so it starts fresh from 0% for the
     // manual run instead of sitting at the asymptotic 95% leftover from
-    // the original auto-prep attempt.
-    prepStartedAt.current = null;
+    // the original auto-prep attempt. Anchor to now (not null) so the running
+    // ticker keeps climbing — nulling it froze the bar at 0%.
+    prepStartedAt.current = Date.now();
     setPrepProgress(0);
     setGeneratingProxy(true);
     try {
@@ -331,7 +332,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   }
 
   async function handleGenerateWaveform() {
-    prepStartedAt.current = null;
+    prepStartedAt.current = Date.now();
     setPrepProgress(0);
     setGeneratingWaveform(true);
     try {

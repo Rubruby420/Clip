@@ -55,9 +55,18 @@ export async function generatePreviewProxy(
   const bin = ffmpegBin();
   const args = [
     "-y",
+    // Offload decode to the GPU. The bottleneck on big sources is decoding 4K
+    // (often 10-bit HEVC at 60fps) — encoding a 720p proxy is cheap. `auto`
+    // picks dxva2/d3d11va/cuda/qsv and falls back to software if none work, so
+    // this is strictly safer/faster. Without it, a 4K HEVC source can never
+    // finish on CPU and just times out below.
+    "-hwaccel", "auto",
     "-i", videoPath,
-    "-vf", "scale=-2:720",
-    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+    // Downscale to 720p, cap to 30fps, force 8-bit so a 60fps/10-bit source
+    // becomes a light, broadly-playable proxy.
+    "-vf", "scale=-2:720,fps=30",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+    "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "128k",
     "-movflags", "+faststart",
     outputPath,
