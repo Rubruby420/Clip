@@ -223,6 +223,23 @@ paths now read/write disk via `lib/storage.ts`. R2 code is fully removed; the
   (upload → process → edit → export → download → delete).
 - After the smoke test passes, the Cloudflare R2 bucket can be deleted.
 
+## Editors / IDEs
+
+The project is editor-agnostic — it's just files + `npm` + Node + FFmpeg. Any
+editor works, including **Antigravity IDE** (VS Code–based, with a Gemini agent).
+When using a different IDE, the environment gotchas above still apply (they are
+machine-specific, not editor-specific):
+
+- Use a **PowerShell** integrated terminal — the commands in this file assume it.
+- The SQLite DB must stay at `C:/Users/tania/ClipData/dev.db` (NEVER inside the
+  OneDrive-synced repo folder).
+- Prisma CLI reads `.env`, not `.env.local` — use the inline-var workaround.
+- Dev server is locked to port 3000.
+- An IDE's built-in AI agent may read `.env.local` (API keys) as context — add it
+  to that tool's ignore list if that's a concern.
+- Don't run two agentic tools on the repo at once (edit conflicts); commit/push
+  between switches.
+
 ## Repository
 
 GitHub: https://github.com/Rubruby420/Clip — branch `main`
