@@ -250,9 +250,12 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     const tick = () => {
       if (prepStartedAt.current === null) return;
       const elapsed = (Date.now() - prepStartedAt.current) / 1000;
-      // Waveform ~45s flat. Proxy ~5% of source duration, floor 90s.
+      // Waveform ~45s flat. Proxy encode is GPU-assisted but a heavy 4K/60fps
+      // source runs near real-time, so budget ~1.5x the source duration (floor
+      // 90s). Overestimating is safe — the bar vanishes the moment the proxy
+      // lands; underestimating parks it at 95% for the rest of the encode.
       const waveformBudget = peaks.length === 0 ? 45 : 0;
-      const proxyBudget = !hasProxy ? Math.max(90, (duration || 600) * 0.05) : 0;
+      const proxyBudget = !hasProxy ? Math.max(90, (duration || 600) * 1.5) : 0;
       const totalBudget = Math.max(20, waveformBudget + proxyBudget);
       const ratio = elapsed / totalBudget;
       const pct = ratio < 1
@@ -288,6 +291,39 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, hasProxy, peaks.length, generatingProxy, generatingWaveform]);
 
+  // While a background proxy encode is in flight (the "Smoother preview"
+  // button kicked one off), poll until proxyUrl lands, then swap the preview
+  // to the smoother proxy. Capped so a failed/timed-out encode doesn't poll
+  // forever (matches the route's 90-min cap plus slack, at 5s per attempt).
+  const proxyPollAttempts = useRef(0);
+  useEffect(() => {
+    if (!generatingProxy) { proxyPollAttempts.current = 0; return; }
+    const interval = setInterval(async () => {
+      proxyPollAttempts.current += 1;
+      if (proxyPollAttempts.current > 1140) {
+        clearInterval(interval);
+        setGeneratingProxy(false);
+        alert("Couldn't build a smoother preview for this video — it's likely too large/long for this machine. The original still plays fine.");
+        return;
+      }
+      try {
+        const res = await fetch(`/api/projects/${id}`);
+        if (!res.ok) return;
+        const { project: p } = await res.json() as { project: ProjectSummary };
+        if (p.proxyUrl) {
+          clearInterval(interval);
+          setProject(p);
+          setVideoSrc(fileUrl(p.proxyUrl));
+          setHasProxy(true);
+          setPendingProxyUrl(null);
+          setGeneratingProxy(false);
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generatingProxy, id]);
+
   // Talk-segment detection now runs server-side during processing (clips
   // land on the project grid), so the editor no longer auto-cuts on load —
   // it opens with the project's existing clips and is a pure editing surface.
@@ -304,20 +340,25 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     try {
       const res = await fetch(`/api/projects/${id}/proxy`, { method: "POST" });
       const data = await res.json();
-      if (res.ok && data.project?.proxyUrl) {
-        // User explicitly asked for the smoother preview — swap now and
-        // accept the playback reset. They clicked the button knowing what
-        // they were getting.
+      if (!res.ok) {
+        alert(data.error || "Couldn't start the preview.");
+        setGeneratingProxy(false);
+        return;
+      }
+      if (data.status === "ready" && data.project?.proxyUrl) {
+        // Proxy already existed — swap immediately.
         setVideoSrc(fileUrl(data.project.proxyUrl));
         setHasProxy(true);
         setPendingProxyUrl(null);
-      } else {
-        alert(data.error || "Couldn't generate the preview.");
+        setGeneratingProxy(false);
       }
+      // status "started" / "running": the encode runs in the background. Keep
+      // generatingProxy true; the proxy-poll effect adopts it when proxyUrl
+      // lands and swaps the preview in. The original keeps playing meanwhile.
     } catch {
-      alert("Couldn't generate the preview.");
+      alert("Couldn't start the preview.");
+      setGeneratingProxy(false);
     }
-    setGeneratingProxy(false);
   }
 
   // Adopt the proxy that landed in the background. Distinct from the
@@ -1074,7 +1115,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                 <>Building the timeline waveform — usually under a minute. The editor will fill it in automatically.</>
               )}
               {peaks.length > 0 && !hasProxy && (
-                <>A smoother 720p preview is rendering in the background (2-3 min for an hour-long video). The original is fine to scrub in the meantime.</>
+                <>A smoother 720p preview is rendering in the background (large 4K/60fps videos can take a while). The original is fine to scrub in the meantime.</>
               )}
             </span>
             <span className="tabular-nums text-yellow-300 font-semibold w-10 text-right shrink-0">
