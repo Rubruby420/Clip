@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import WaveformTimeline from "@/components/editor/WaveformTimeline";
+import ClipGroups from "@/components/editor/ClipGroups";
 import SpliceStrip, { type Segment } from "@/components/editor/SpliceStrip";
 import SilenceControls from "@/components/editor/SilenceControls";
 import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
@@ -23,6 +24,9 @@ interface WordTimestamp { word: string; start: number; end: number; }
 interface SavedClip {
   id: string; title: string; startTime: number; endTime: number;
   muted: boolean;
+  // Returned by GET /api/projects/[id] (full Prisma rows); used to number the
+  // sidebar's grouped clip list in creation order.
+  createdAt: string;
 }
 interface Transcription {
   text: string; words: WordTimestamp[]; duration: number;
@@ -100,6 +104,14 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       ? spliceSegments.map((s) => ({ start: s.start, end: s.end }))
       : undefined),
     [tool, spliceSegments],
+  );
+
+  // Clips in creation order (oldest first) for the grouped sidebar list, so
+  // "Clip 1" is the first one saved. The API returns them score-desc; we sort
+  // a copy here without disturbing the score-ordered list the waveform uses.
+  const orderedClips = useMemo(
+    () => [...(project?.clips ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [project?.clips],
   );
 
   // Apply a fresh project payload to local state. Hoisted so the initial
@@ -1038,21 +1050,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                 then click <span className="text-brand-300">Save as new clip</span>.
               </p>
             ) : (
-              <div className="space-y-1.5">
-                {project.clips.map((c) => (
-                  <Link
-                    key={c.id}
-                    href={`/edit/${c.id}`}
-                    className="block p-2 rounded-lg bg-surface-700/50 hover:bg-surface-700 transition-colors"
-                  >
-                    <p className="text-[11px] text-white truncate">{c.title}</p>
-                    <p className="text-[10px] text-surface-500 tabular-nums">
-                      {formatDuration(c.startTime)} – {formatDuration(c.endTime)}
-                      <span className="text-surface-600"> · {formatDuration(c.endTime - c.startTime)}</span>
-                    </p>
-                  </Link>
-                ))}
-              </div>
+              <ClipGroups projectId={project.id} clips={orderedClips} />
             )}
           </div>
         </aside>
