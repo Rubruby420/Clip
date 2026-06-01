@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useRef, useState } from "react";
-import { Play, Pause } from "lucide-react";
+import { Play, Pause, Maximize, Minimize } from "lucide-react";
 import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
@@ -98,6 +98,32 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   const bgVideoRef = useRef<HTMLVideoElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // Internal handle to the preview container so we can fullscreen the WHOLE
+  // composed preview (video + captions + overlays), not just the raw <video>.
+  // Merged with the forwarded ref so a parent ref (none today) still works.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const setContainerRef = (node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+  };
+
+  // Fullscreen state mirrors the document so the icon stays correct even when
+  // the user exits with Esc or the browser's own UI.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === containerRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      containerRef.current?.requestFullscreen().catch(() => {});
+    }
+  }
 
   // Index of the segment currently playing in a splice sequence. Kept in a
   // ref so the timeupdate handler can advance without re-subscribing.
@@ -264,8 +290,12 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
 
   return (
     <div
-      ref={ref}
-      className={`relative ${getAspectClass(layout.aspectRatio)} w-full overflow-hidden rounded-xl shadow-2xl bg-black`}
+      ref={setContainerRef}
+      className={`relative ${
+        isFullscreen
+          ? "w-screen h-screen rounded-none"
+          : `${getAspectClass(layout.aspectRatio)} w-full rounded-xl`
+      } overflow-hidden shadow-2xl bg-black`}
     >
       {/* Background layer */}
       {layout.bgType === "blur" ? (
@@ -450,6 +480,14 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         <span className="text-white text-[10px] font-mono tabular-nums shrink-0">
           {formatTime(localTime)} / {formatTime(clipDuration)}
         </span>
+        <button
+          onClick={toggleFullscreen}
+          className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/15 flex items-center justify-center shrink-0 transition-colors"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        >
+          {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+        </button>
       </div>
     </div>
   );
