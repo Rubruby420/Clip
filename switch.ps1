@@ -10,6 +10,8 @@
 #   - Starting in an editor (just opened it)     -> run this, choose "2 Arriving"
 #
 # To run it: open the PowerShell terminal in your editor and type:
+#   swap            (works from any folder - defined in your PowerShell profile)
+# or, from inside the Clip folder:
 #   ./switch.ps1
 # ---------------------------------------------------------------------------
 

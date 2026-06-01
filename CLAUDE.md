@@ -244,7 +244,9 @@ machine-specific, not editor-specific):
 
 GitHub is the baton the two editors pass back and forth. The golden rule:
 **only one editor's AI agent edits the project at a time.** To hand off safely,
-run `./switch.ps1` (in the editor's PowerShell terminal) — a guided menu:
+type `swap` in the editor's PowerShell terminal (a `swap` function in the user's
+PowerShell profile at `…\WindowsPowerShell\profile.ps1` runs `switch.ps1` from any
+folder; `./switch.ps1` from inside the repo still works) — a guided menu:
 
 - **`1` Leaving** — saves your work (`git add` + `commit` + `push`). Run it in the
   editor you're stepping away from, *before* opening the other one.
