@@ -240,6 +240,24 @@ machine-specific, not editor-specific):
 - Don't run two agentic tools on the repo at once (edit conflicts); commit/push
   between switches.
 
+### Switching between Cursor and Antigravity (`switch.ps1`)
+
+GitHub is the baton the two editors pass back and forth. The golden rule:
+**only one editor's AI agent edits the project at a time.** To hand off safely,
+run `./switch.ps1` (in the editor's PowerShell terminal) — a guided menu:
+
+- **`1` Leaving** — saves your work (`git add` + `commit` + `push`). Run it in the
+  editor you're stepping away from, *before* opening the other one.
+- **`2` Arriving** — pulls the latest (`git pull`). Run it in the editor you just
+  opened, *before* you start editing.
+- **`3` Cancel** — does nothing.
+
+The script handles the common snags in plain English (push rejected because the
+other editor pushed first → "Arrive first, then Leave"; pulling over unsaved
+changes → warns instead of clobbering). It keeps files in sync but cannot stop
+two agents typing at once — that part is on the human. Equivalent by hand:
+`git add -A; git commit -m "…"; git push` when leaving, `git pull` when arriving.
+
 ## Repository
 
 GitHub: https://github.com/Rubruby420/Clip — branch `main`
