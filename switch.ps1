@@ -79,10 +79,13 @@ switch ($choice) {
         git push
         if (-not $?) {
             Write-Host ""
-            Write-Host "!  Saved on your computer, but GitHub rejected the upload." -ForegroundColor Red
-            Write-Host "   This usually means the OTHER editor pushed newer work." -ForegroundColor Red
-            Write-Host "   Fix: run this script again and choose '2 Arriving' first," -ForegroundColor Red
-            Write-Host "   then come back and choose '1 Leaving'." -ForegroundColor Red
+            Write-Host "!  Saved on your computer, but couldn't send it to GitHub." -ForegroundColor Red
+            Write-Host "   Your work is safe locally - nothing was lost." -ForegroundColor Red
+            Write-Host "   Most common cause: the OTHER editor pushed newer work first." -ForegroundColor Red
+            Write-Host "   Try this: run the script again, choose '2 Arriving' to pull," -ForegroundColor Red
+            Write-Host "   then choose '1 Leaving' to send yours." -ForegroundColor Red
+            Write-Host "   If that doesn't fix it, check your internet connection, that" -ForegroundColor Red
+            Write-Host "   you're signed in to GitHub, and read the message above." -ForegroundColor Red
             break
         }
 
