@@ -592,6 +592,12 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                     2x
                   </button>
                 </div>
+                {/* Tick lines marking the 0.25x / 1x / 2x endpoints on the track. */}
+                <div className="relative h-1.5 mb-0.5">
+                  <span style={{ left: "0%" }} className="absolute top-0 w-px h-1.5 bg-surface-500" />
+                  <span style={{ left: "42.857%" }} className="absolute top-0 -translate-x-1/2 w-px h-1.5 bg-surface-300" />
+                  <span style={{ left: "100%" }} className="absolute top-0 -translate-x-full w-px h-1.5 bg-surface-500" />
+                </div>
                 <input
                   type="range"
                   list="speed-ticks"
