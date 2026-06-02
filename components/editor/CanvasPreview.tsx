@@ -131,9 +131,11 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   // Preview playback speed (preview-only — doesn't affect trims/export). Applied
   // to the main <video> and the synced music <audio>. Re-applied on videoSrc
   // change because swapping src remounts the element and resets the rate.
-  const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const [playbackRate, setPlaybackRate] = useState(1);
   const [speedExpanded, setSpeedExpanded] = useState(false);
+  // Clamp + snap to the 0.25-step grid between 0.25x and 2x.
+  const setSpeed = (v: number) =>
+    setPlaybackRate(Math.min(2, Math.max(0.25, Math.round(v * 4) / 4)));
   useEffect(() => {
     if (mainVideoRef.current) mainVideoRef.current.playbackRate = playbackRate;
     if (musicRef.current) musicRef.current.playbackRate = playbackRate;
@@ -556,18 +558,23 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
               />
             </button>
             {speedExpanded && (
-              <div className="grid grid-cols-3 gap-1 mt-1 px-0.5">
-                {SPEEDS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setPlaybackRate(s)}
-                    className={`px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-                      playbackRate === s ? "bg-brand-600 text-white" : "text-surface-300 hover:bg-surface-700"
-                    }`}
-                  >
-                    {s === 1 ? "Normal" : `${s}x`}
-                  </button>
-                ))}
+              <div className="px-2 pt-2 pb-1">
+                <div className="flex items-center justify-between text-[10px] text-surface-500 mb-1">
+                  <span>0.25x</span>
+                  <span className="text-white font-semibold text-[11px] tabular-nums">{playbackRate}x</span>
+                  <span>2x</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.25}
+                  max={2}
+                  step={0.25}
+                  value={playbackRate}
+                  onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                  onWheel={(e) => setSpeed(playbackRate + (e.deltaY < 0 ? 0.25 : -0.25))}
+                  className="w-full accent-brand-500 cursor-pointer"
+                  aria-label="Playback speed"
+                />
               </div>
             )}
           </div>
