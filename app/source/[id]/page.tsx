@@ -121,6 +121,9 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [titleDraft, setTitleDraft] = useState("");
   const titleEscRef = useRef(false);
 
+  // "Detect Speakers" — opt-in auto-detection of talking segments into clips.
+  const [detecting, setDetecting] = useState(false);
+
   async function commitProjectTitle() {
     const title = titleDraft.trim();
     setEditingTitle(false);
@@ -950,6 +953,28 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     router.push(`/projects/${id}`);
   }
 
+  // Detect Speakers — auto-find the talking parts of the source and turn each
+  // into a clip (reads the prepped waveform). Refreshes so the new clips show
+  // up in the sidebar groups.
+  async function handleDetectSpeakers() {
+    setDetecting(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/detect-speakers`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Couldn't detect speakers.");
+      } else if (data.created === 0) {
+        alert(data.message || "No clear talking segments found.");
+      } else {
+        const r = await fetch(`/api/projects/${id}`);
+        if (r.ok) { const { project: p } = await r.json() as { project: ProjectSummary }; setProject(p); }
+      }
+    } catch {
+      alert("Couldn't detect speakers — check your connection.");
+    }
+    setDetecting(false);
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-surface-900 flex items-center justify-center px-6">
@@ -1027,6 +1052,15 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleDetectSpeakers}
+            disabled={detecting || peaks.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-brand-600 text-brand-300 hover:bg-brand-900/40 disabled:opacity-40 text-xs rounded-lg font-medium transition-colors"
+            title={peaks.length === 0 ? "Waveform still preparing…" : "Auto-find the talking parts and turn each into a clip"}
+          >
+            {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AudioLines className="w-3.5 h-3.5" />}
+            {detecting ? "Detecting…" : "Detect Speakers"}
+          </button>
           <UndoRedoButtons
             undo={history.undo}
             redo={history.redo}
