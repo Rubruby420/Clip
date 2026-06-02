@@ -2,7 +2,9 @@
   "name": "clip",
   "version": "0.1.0",
   "private": true,
-  "main": "electron/main.js",
+  "main": "electron/main.dist.js",
+  "description": "AI clipping app — turn long recordings into viral short-form clips",
+  "author": "Rubruby420",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

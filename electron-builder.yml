@@ -11,11 +11,6 @@ appId: com.rubruby420.clip
 productName: Clip
 copyright: "Copyright © 2026"
 
-# electron/main.js is bundled into main.dist.js by esbuild before packaging
-# (npm run electron:bundle). The bundle inlines electron-updater + electron-log
-# so the asar has no node_modules at all — keeps the installer small.
-main: electron/main.dist.js
-
 directories:
   output: dist
   buildResources: build
@@ -35,6 +30,7 @@ extraResources:
       - "**/*"
       - "!**/.cache/**"
       - "!**/node_modules/.cache/**"
+      - "!**/.tmp/**"
 
 win:
   target:
