@@ -128,6 +128,25 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
     }
   }
 
+  // Settings popover (opened by the gear in the control bar). Closes on Escape
+  // or a click outside the gear+popover wrapper. settingsRef wraps both so
+  // "inside" is well-defined.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSettingsOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      if (!settingsRef.current?.contains(e.target as Node)) setSettingsOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [settingsOpen]);
+
   // Index of the segment currently playing in a splice sequence. Kept in a
   // ref so the timeupdate handler can advance without re-subscribing.
   const seqIdxRef = useRef(0);
@@ -483,14 +502,29 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         <span className="text-white text-[10px] font-mono tabular-nums shrink-0">
           {formatTime(localTime)} / {formatTime(clipDuration)}
         </span>
-        <button
-          onClick={() => onSettings?.()}
-          className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/15 flex items-center justify-center shrink-0 transition-colors"
-          aria-label="Settings"
-          title="Settings"
-        >
-          <Settings className="w-3.5 h-3.5" />
-        </button>
+        <div ref={settingsRef} className="relative shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); setSettingsOpen((v) => !v); onSettings?.(); }}
+            className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/15 flex items-center justify-center transition-colors"
+            aria-label="Settings"
+            title="Settings"
+            aria-haspopup="menu"
+            aria-expanded={settingsOpen}
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+          {settingsOpen && (
+            <div
+              role="menu"
+              className="absolute bottom-10 right-0 z-40 w-44 rounded-xl bg-surface-800 border border-surface-600 shadow-2xl p-1.5 text-sm"
+            >
+              <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
+                Settings
+              </p>
+              <p className="px-2 py-1.5 text-[12px] text-surface-400">Options coming soon</p>
+            </div>
+          )}
+        </div>
         <button
           onClick={toggleFullscreen}
           className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/15 flex items-center justify-center shrink-0 transition-colors"
