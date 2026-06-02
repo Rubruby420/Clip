@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useRef, useState } from "react";
-import { Play, Pause, Maximize, Minimize, Settings, Clock, Flame } from "lucide-react";
+import { Play, Pause, Maximize, Minimize, Settings, Clock, Flame, ChevronDown } from "lucide-react";
 import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
@@ -133,6 +133,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   // change because swapping src remounts the element and resets the rate.
   const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [speedExpanded, setSpeedExpanded] = useState(false);
   useEffect(() => {
     if (mainVideoRef.current) mainVideoRef.current.playbackRate = playbackRate;
     if (musicRef.current) musicRef.current.playbackRate = playbackRate;
@@ -533,29 +534,42 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                 : "opacity-0 scale-95 translate-y-1 pointer-events-none"
             }`}
           >
-            {playbackRate !== 1 && (
-              <div className="mx-1 mb-1.5 flex items-center gap-1 rounded-md bg-orange-500/15 border border-orange-500/30 px-2 py-1 text-[11px] font-semibold text-orange-300">
-                <Clock className="w-3 h-3" />
-                <Flame className="w-3 h-3" />
-                <span>{playbackRate}x</span>
+            {/* "Speed" control — clock icon + label; the current rate (with a
+                fire badge) shows only when it isn't Normal. Click to expand
+                the speed options. */}
+            <button
+              onClick={() => setSpeedExpanded((v) => !v)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-700 transition-colors text-left"
+              aria-expanded={speedExpanded}
+            >
+              <Clock className="w-3.5 h-3.5 text-surface-300 shrink-0" />
+              <span className="text-[12px] text-white font-medium flex-1">Speed</span>
+              {playbackRate !== 1 ? (
+                <span className="flex items-center gap-1 text-[11px] font-semibold text-orange-300">
+                  <Flame className="w-3 h-3" /> {playbackRate}x
+                </span>
+              ) : (
+                <span className="text-[11px] text-surface-400">Normal</span>
+              )}
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-surface-500 shrink-0 transition-transform ${speedExpanded ? "rotate-180" : ""}`}
+              />
+            </button>
+            {speedExpanded && (
+              <div className="grid grid-cols-3 gap-1 mt-1 px-0.5">
+                {SPEEDS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setPlaybackRate(s)}
+                    className={`px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                      playbackRate === s ? "bg-brand-600 text-white" : "text-surface-300 hover:bg-surface-700"
+                    }`}
+                  >
+                    {s === 1 ? "Normal" : `${s}x`}
+                  </button>
+                ))}
               </div>
             )}
-            <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
-              Playback speed
-            </p>
-            <div className="grid grid-cols-3 gap-1">
-              {SPEEDS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setPlaybackRate(s)}
-                  className={`px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-                    playbackRate === s ? "bg-brand-600 text-white" : "text-surface-300 hover:bg-surface-700"
-                  }`}
-                >
-                  {s === 1 ? "Normal" : `${s}x`}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
         <button
