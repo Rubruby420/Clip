@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { groupSpeechSegments } from "@/lib/silence";
 import { extractAudio, extractThumbnail, tmpPath } from "@/lib/ffmpeg";
-import { transcribeAudio, sliceWords } from "@/lib/whisper";
+import { transcribeAudio } from "@/lib/whisper";
 import { resolveStorage, ensureDirFor, clipThumbPath } from "@/lib/storage";
 import fs from "fs";
 import { randomUUID } from "crypto";
@@ -91,10 +91,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     await extractThumbnail(videoPath, thumbAbs, seg.start + 1).catch(() => null);
     const thumbnailUrl = fs.existsSync(thumbAbs) ? thumbRel : "";
 
-    // Slice the real words for this segment so captions / Coach / retitle
-    // work on the clip without needing a separate transcription step.
-    const words = sliceWords(transcription.words, seg.start, seg.end);
-
     const clip = await db.clip.create({
       data: {
         id: clipId,
@@ -103,7 +99,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         startTime: seg.start,
         endTime:   seg.end,
         score:     null,
-        words:     JSON.stringify(words),
+        words:     "[]",
         thumbnailUrl,
       },
     });
