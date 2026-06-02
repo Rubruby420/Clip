@@ -3,7 +3,6 @@ import { db } from "@/lib/db";
 import { transcribeAudio, sliceWords } from "@/lib/whisper";
 import { detectHighlights, type Highlight } from "@/lib/assemblyai";
 import { detectHighlightsFromTranscript, selectBestSegment } from "@/lib/highlights";
-import { detectTalkSegments } from "@/lib/silence";
 import { evaluateClip } from "@/lib/coach";
 import { extractAudio, extractThumbnail, generatePreviewProxy, getVideoDuration, tmpPath } from "@/lib/ffmpeg";
 import { generatePeaks } from "@/lib/waveform";
@@ -83,13 +82,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       //     with the Whisper-reported duration (they agree to within a
       //     frame). Non-fatal — if probe fails, the player still works
       //     once <video> loads its own metadata.
-      // Retained for manual-mode clip detection below (talk-segment cutting
-      // needs the source duration and the waveform peaks).
-      let sourceDuration = 0;
       try {
         const probed = await getVideoDuration(videoPath);
         if (probed > 0) {
-          sourceDuration = probed;
           await db.project.update({ where: { id }, data: { duration: probed } });
         }
       } catch (err) {
@@ -119,42 +114,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // (720p proxy generation moved to finishWithProxy(), run AFTER clips
       //  are created so it can never block clip detection — see above.)
 
-      // 3. Manual mode: no Whisper/LLM/Coach, but we DO detect talking
-      //    segments from the waveform here (server-side) and create one clip
-      //    per segment with a thumbnail — so the clips live on the project
-      //    grid as their own screen, independent of the source editor. The
-      //    editor is then just the per-clip / "make more clips" surface.
-      //    Coach scoring stays deferred to /api/projects/[id]/finalize.
+      // 3. Manual mode: light prep ONLY (waveform + proxy above). We do NOT
+      //    auto-detect clips here — "Manual" means what the upload card
+      //    promises: you cut clips yourself in the editor. Talking-segment
+      //    detection is now an explicit, opt-in action on the project page
+      //    ("Detect Speakers" → api/projects/[id]/detect-speakers).
       if (mode === "manual") {
-        try {
-          const segments =
-            peaks.length > 0 && sourceDuration > 0
-              ? detectTalkSegments(peaks, sourceDuration)
-              : [];
-          let n = 0;
-          for (const seg of segments) {
-            const clipId = randomUUID();
-            const thumbRel = clipThumbPath(id, clipId);
-            const thumbAbs = resolveStorage(thumbRel);
-            await ensureDirFor(thumbAbs);
-            await extractThumbnail(videoPath, thumbAbs, seg.start + 1).catch(() => null);
-            const thumbnailUrl = fs.existsSync(thumbAbs) ? thumbRel : "";
-            await db.clip.create({
-              data: {
-                id: clipId,
-                projectId: id,
-                title: `Clip ${++n}`,
-                startTime: seg.start,
-                endTime: seg.end,
-                score: null,
-                words: "[]",
-                thumbnailUrl,
-              },
-            });
-          }
-        } catch (err) {
-          console.error("Manual clip detection failed (non-fatal):", err);
-        }
         await finishWithProxy();
         return;
       }

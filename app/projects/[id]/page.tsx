@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors } from "lucide-react";
+import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
@@ -45,6 +45,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [detecting, setDetecting] = useState(false);
   // Guard so the thumbnail backfill is requested at most once per mount.
   const thumbsRequested = useRef(false);
 
@@ -65,6 +66,27 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         if (r.ok && j.generated > 0) fetchProject();
       } catch {}
     }
+  }
+
+  // "Detect Speakers" — opt-in: auto-find the talking parts of the source and
+  // turn each into a clip. Replaces the old auto-detection that ran silently
+  // in Manual mode (which made "Manual" feel like it was AI-processing).
+  async function handleDetectSpeakers() {
+    setDetecting(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/detect-speakers`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Couldn't detect speakers.");
+      } else if (data.created === 0) {
+        alert(data.message || "No clear talking segments found.");
+      } else {
+        await fetchProject();
+      }
+    } catch {
+      alert("Couldn't detect speakers — check your connection.");
+    }
+    setDetecting(false);
   }
 
   useEffect(() => {
@@ -131,13 +153,24 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
           </div>
           {project.status === "ready" && (
-            <Link
-              href={`/source/${project.id}`}
-              className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
-              title="Jump back to the source editor and cut more clips by hand"
-            >
-              <Scissors className="w-4 h-4" /> Make more clips
-            </Link>
+            <div className="shrink-0 flex items-center gap-2">
+              <button
+                onClick={handleDetectSpeakers}
+                disabled={detecting}
+                className="flex items-center gap-1.5 px-4 py-2 border border-brand-600 text-brand-300 hover:bg-brand-900/40 disabled:opacity-50 text-sm rounded-lg font-medium transition-colors"
+                title="Auto-find the talking parts of your video and turn each into a clip"
+              >
+                {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <AudioLines className="w-4 h-4" />}
+                {detecting ? "Detecting…" : "Detect Speakers"}
+              </button>
+              <Link
+                href={`/source/${project.id}`}
+                className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
+                title="Jump back to the source editor and cut more clips by hand"
+              >
+                <Scissors className="w-4 h-4" /> Make more clips
+              </Link>
+            </div>
           )}
         </div>
 
@@ -151,12 +184,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
             <div>
               <p className="text-white font-semibold text-lg">
-                {project.clips.length > 0 ? "Coach is scoring your clips" : "Detecting your clips"}
+                {project.clips.length > 0 ? "Coach is scoring your clips" : "Preparing your video"}
               </p>
               <p className="text-surface-500 text-sm mt-1">
                 {project.clips.length > 0
                   ? "Transcribing each clip and grading it for virality. Scores will appear below as they finish."
-                  : "Building the waveform and detecting the talking parts of your video. Your clips will appear here as they're cut…"}
+                  : "Building the waveform and a smooth 720p preview so you can start clipping…"}
               </p>
             </div>
           </div>
@@ -238,15 +271,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <Scissors className="w-12 h-12 mx-auto mb-3 opacity-50" />
             <p className="text-white font-medium mb-1">No clips yet</p>
             <p className="text-sm mb-5">
-              Open the source editor, drag the waveform handles to scope a clip, and save —
-              one at a time. When you&rsquo;re done, AI scores each clip.
+              Let the app auto-find the talking parts with <span className="text-brand-300">Detect Speakers</span>,
+              or open the editor and cut clips yourself.
             </p>
-            <Link
-              href={`/source/${project.id}`}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
-            >
-              <Scissors className="w-4 h-4" /> Make a clip
-            </Link>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={handleDetectSpeakers}
+                disabled={detecting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm rounded-lg font-medium transition-colors"
+              >
+                {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <AudioLines className="w-4 h-4" />}
+                {detecting ? "Detecting…" : "Detect Speakers"}
+              </button>
+              <Link
+                href={`/source/${project.id}`}
+                className="inline-flex items-center gap-1.5 px-4 py-2 border border-surface-600 hover:border-brand-600 text-surface-300 hover:text-white text-sm rounded-lg font-medium transition-colors"
+              >
+                <Scissors className="w-4 h-4" /> Make a clip
+              </Link>
+            </div>
           </div>
         )}
       </main>

@@ -185,7 +185,7 @@ export default function UploadPage() {
         (loaded, total) => setProgress(Math.min(99, Math.round((loaded / total) * 100))),
       );
 
-      setStatusText(mode === "manual" ? "Upload complete! Detecting clips…" : "Upload complete! Starting AI…");
+      setStatusText(mode === "manual" ? "Upload complete! Preparing your video…" : "Upload complete! Starting AI…");
       setProgress(100);
       setPhase("uploaded");
 
@@ -234,7 +234,7 @@ export default function UploadPage() {
               <h2 className="text-2xl font-bold text-white mb-1">Upload complete!</h2>
               <p className="text-surface-500">
                 {mode === "manual"
-                  ? "Detecting clips from your audio — opening your clips…"
+                  ? "Preparing your video — opening the editor…"
                   : "AI is now finding your best moments…"}
               </p>
             </div>
