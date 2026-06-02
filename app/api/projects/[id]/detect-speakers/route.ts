@@ -43,14 +43,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     try {
       await extractAudio(videoPath, audioPath);
       transcription = await transcribeAudio(audioPath);
-      // Persist so subsequent runs are instant.
-      await db.project.update({
-        where: { id },
-        data: {
-          transcription: JSON.stringify(transcription),
-          duration: transcription.duration || project.duration,
-        },
-      });
+      // NOTE: intentionally NOT saving to Project.transcription — persisting
+      // it would cause the source editor to show captions on the raw video,
+      // which is AI-mode-only behaviour. Detection result is used in-memory.
     } catch (err) {
       console.error("Detect Speakers — transcription failed:", err);
       return NextResponse.json(
