@@ -251,6 +251,18 @@ Other commands: `npm run build`, `npm run db:studio`.
   `isFullscreen` mirrors `document.fullscreenElement` (so the icon is right even on Esc);
   when fullscreen the root div swaps its aspect-box classes for `w-screen h-screen
   rounded-none`. Shared component, so it shows on the source, clip, and beta editors.
+- **Preview settings menu + playback speed** (`components/editor/CanvasPreview.tsx`): a
+  gear icon in the control bar (left of fullscreen) toggles a small popover that
+  animates open/close (fade + scale from the corner, `pointer-events-none` + `aria-hidden`
+  when closed, respects reduce-motion; dismisses on Esc / outside-click via a
+  `settingsRef` wrapper). The menu holds a **"Speed"** control (clock icon + label; the
+  current rate shows a 🔥 fire badge when ≠ 1x, else muted "Normal"). Expanding it reveals
+  a **0.25x–2x slider** (`step=0.01`, wheel nudges 0.05): clickable 0.25x/1x/2x quick-jump
+  markers + grey tick lines at those points, white end-caps at the limits, and a
+  brand-colored line marking the current speed. `setSpeed` clamps, snaps to 0.01, and
+  **magnets to exactly 1x within ±0.04**. It sets the preview `<video>.playbackRate` (and
+  the synced music `<audio>`), re-applied on src remount / `loadedmetadata`. Preview-only:
+  no trim/timeline/export/DB impact.
 
 ## Status (last session, 2026-05-31)
 
@@ -268,6 +280,8 @@ Recent work, all on `main`:
   for and swaps in, plus a fix for the progress bar freezing at 0% (see gotchas/feature
   bullets above). Confirmed the 4K/60fps proxy ceiling on the Iris Xe iGPU is ~0.6x
   real-time (~45–55 min for a 32-min clip); acceptable now that it's a background job.
+- **Preview settings menu** — gear → animated popover with a **playback-speed** control
+  (0.25x–2x slider, 1x magnet, quick-jump markers + ticks + end-caps). Preview-only.
 
 Also added a **`swap`** PowerShell command (in the user's profile) that runs
 `switch.ps1` from any folder for the Cursor↔Antigravity editor handoff.
