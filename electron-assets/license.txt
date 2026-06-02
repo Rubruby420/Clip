@@ -1,0 +1,64 @@
+CLIP — END USER LICENSE AGREEMENT
+Version 0.1.0  |  Effective: June 2026
+──────────────────────────────────────
+
+PLEASE READ THIS AGREEMENT CAREFULLY BEFORE INSTALLING OR USING CLIP.
+BY CLICKING "I AGREE" YOU ACCEPT THESE TERMS IN FULL.
+
+1. GRANT OF LICENSE
+   Clip is licensed, not sold. Subject to these terms, you are granted a
+   non-exclusive, non-transferable license to install and use Clip on
+   devices you own or control, for personal, non-commercial purposes.
+
+2. RESTRICTIONS
+   You may not:
+   (a) distribute, sell, sublicense, or rent Clip to any third party;
+   (b) reverse-engineer, decompile, or disassemble Clip except where
+       applicable law expressly permits it;
+   (c) remove or alter any copyright, trademark, or proprietary notices.
+
+3. AI SERVICES & THIRD-PARTY APIS
+   Clip uses OpenAI (Whisper, GPT-4o-mini, TTS), AssemblyAI, YouTube Data
+   API, and Jamendo to deliver its AI features. Your use of those features
+   is also governed by the respective providers' terms of service. API keys
+   you supply remain your responsibility; do not share them.
+
+4. DATA & PRIVACY
+   Clip is a local desktop application. Your video files, project data, and
+   exports are stored on your own machine (AppData and a configurable
+   storage folder). No usage data is transmitted to the developer. Audio
+   fragments are sent to third-party AI services solely to produce
+   transcripts, highlight scores, and voiceovers.
+
+5. CONTENT RESPONSIBILITY
+   You are solely responsible for the content you upload and export. You
+   must have the rights to any video, audio, or image material you process
+   with Clip. The developer is not liable for any copyright infringement or
+   other harm arising from your content.
+
+6. DISCLAIMER OF WARRANTIES
+   CLIP IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. THE ENTIRE RISK
+   AS TO QUALITY AND PERFORMANCE IS WITH YOU.
+
+7. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL THE DEVELOPER BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR RELATED TO YOUR USE
+   OF CLIP, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+8. UPDATES
+   Clip may download and install updates automatically. Updates are subject
+   to these terms unless a newer agreement accompanies them.
+
+9. TERMINATION
+   This license is effective until terminated. It terminates automatically
+   if you breach any of its terms. On termination you must destroy all
+   copies of Clip in your possession.
+
+10. GOVERNING LAW
+    These terms are governed by the laws of the jurisdiction in which the
+    developer resides, without regard to conflict-of-law principles.
+
+──────────────────────────────────────
+Copyright © 2026 Rubruby420. All rights reserved.

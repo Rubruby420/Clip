@@ -12,8 +12,8 @@ productName: Clip
 copyright: "Copyright © 2026"
 
 directories:
-  output: dist
-  buildResources: build
+  output: C:/Users/tania/ClipDist
+  buildResources: electron-assets
 
 files:
   - electron/main.dist.js
@@ -47,6 +47,10 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Clip
+  license: electron-assets/license.txt
+  installerSidebar: electron-assets/installerSidebar.bmp
+  uninstallerSidebar: electron-assets/installerSidebar.bmp
+  installerHeader: electron-assets/installerHeader.bmp
   # Silent updates via electron-updater reuse the installer; /S flag skips the
   # wizard. Users who run the installer manually still see the full wizard.
 
