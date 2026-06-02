@@ -14,9 +14,19 @@ function ffmpegBin(): string {
   }
 }
 
-export async function extractAudio(videoPath: string, outputPath: string): Promise<void> {
+export async function extractAudio(videoPath: string, outputPath: string, prependSilenceMs = 0): Promise<void> {
   const bin = ffmpegBin();
-  await execAsync(`"${bin}" -y -i "${videoPath}" -vn -ar 16000 -ac 1 -b:a 64k "${outputPath}"`);
+  if (prependSilenceMs > 0) {
+    // Prepend silence so Whisper doesn't clip the very first word — a known
+    // Whisper quirk where the first utterance is sometimes missed when audio
+    // starts immediately at t=0. Caller must subtract prependSilenceMs/1000
+    // from all returned word timestamps.
+    await execAsync(
+      `"${bin}" -y -i "${videoPath}" -vn -af "aformat=channel_layouts=mono,adelay=${prependSilenceMs}" -ar 16000 -b:a 64k "${outputPath}"`,
+    );
+  } else {
+    await execAsync(`"${bin}" -y -i "${videoPath}" -vn -ar 16000 -ac 1 -b:a 64k "${outputPath}"`);
+  }
 }
 
 // Extract just the audio for a [startSec, endSec] slice of the source.

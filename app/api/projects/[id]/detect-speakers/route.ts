@@ -37,12 +37,25 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "Transcript data is corrupted — try re-processing." }, { status: 500 });
     }
   } else {
-    // Manual-mode project: run Whisper now. Extract audio → transcribe → cache.
+    // Manual-mode project: run Whisper now.
+    // A 500ms silence is prepended before the audio so Whisper doesn't clip
+    // the very first word (a known quirk when speech starts at t=0).
+    // All returned word timestamps are shifted back by that amount afterward.
+    const LEAD_S = 0.5;
     const videoPath = resolveStorage(project.originalUrl);
     const audioPath = tmpPath(`${id}_detect.mp3`);
     try {
-      await extractAudio(videoPath, audioPath);
-      transcription = await transcribeAudio(audioPath);
+      await extractAudio(videoPath, audioPath, LEAD_S * 1000);
+      const raw = await transcribeAudio(audioPath);
+      transcription = {
+        ...raw,
+        words: raw.words.map((w) => ({
+          ...w,
+          start: Math.max(0, w.start - LEAD_S),
+          end:   Math.max(0, w.end   - LEAD_S),
+        })),
+        duration: Math.max(0, raw.duration - LEAD_S),
+      };
       // NOTE: intentionally NOT saving to Project.transcription — persisting
       // it would cause the source editor to show captions on the raw video,
       // which is AI-mode-only behaviour. Detection result is used in-memory.

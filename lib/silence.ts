@@ -101,9 +101,16 @@ export function detectTalkSegments(
 // fires on real speech — Whisper doesn't emit words over music, bangs, or
 // applause, so those sections are naturally ignored.
 //
-// A "conversation chunk" is a run of words with no gap longer than
-// minSilenceGap. Tune defaults to match detectTalkSegments so clips feel
-// similar in size.
+// Tuning rationale for stream / gaming / podcast content:
+//   - minSilenceGap 1.5s: speakers pause 1–2s between thoughts; 0.7s was
+//     splitting mid-thought and creating many tiny segments that then got
+//     dropped by the length filter.
+//   - minSegmentLength 0.8s: catches genuine short utterances ("alright",
+//     "yeah") that are real speech, not noise.
+//   - orphanAbsorb 3.0s: a short orphan within 3s of the next segment gets
+//     pulled INTO that segment instead of being silently dropped. Fixes the
+//     "alright [pause] main speech" case — the clip starts at "alright".
+//   - padding 0.4s: more breathing room so playback doesn't start mid-word.
 export function groupSpeechSegments(
   words: { start: number; end: number }[],
   duration: number,
@@ -111,9 +118,10 @@ export function groupSpeechSegments(
 ): TalkSegment[] {
   if (!Array.isArray(words) || words.length === 0 || duration <= 0) return [];
 
-  const minSilenceGap    = opts.minSilenceGap    ?? 0.7;
-  const minSegmentLength = opts.minSegmentLength ?? 1.2;
-  const padding          = opts.padding          ?? 0.25;
+  const minSilenceGap    = opts.minSilenceGap    ?? 1.5;
+  const minSegmentLength = opts.minSegmentLength ?? 0.8;
+  const padding          = opts.padding          ?? 0.4;
+  const orphanAbsorb     = 3.0; // absorb a short segment into a neighbor within this gap
 
   // Sort by start time — Whisper is usually in order but be safe.
   const sorted = [...words].sort((a, b) => a.start - b.start);
@@ -126,7 +134,7 @@ export function groupSpeechSegments(
   for (let i = 1; i < sorted.length; i++) {
     const w = sorted[i];
     if (w.start - segEnd < minSilenceGap) {
-      segEnd = Math.max(segEnd, w.end); // extend
+      segEnd = Math.max(segEnd, w.end);
     } else {
       merged.push({ start: segStart, end: segEnd });
       segStart = w.start;
@@ -135,10 +143,44 @@ export function groupSpeechSegments(
   }
   merged.push({ start: segStart, end: segEnd });
 
-  // Pass 2 — drop stray single-word blips shorter than minSegmentLength.
+  // Pass 2 — absorb short orphan segments into the nearest adjacent segment
+  // when the gap between them is ≤ orphanAbsorb. This fixes cases like
+  // "alright [2s gap] main conversation": the short word pulls the adjacent
+  // clip's boundary back to include it, rather than being silently dropped.
+  // Loop until stable (handles runs of consecutive short segments).
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < merged.length; i++) {
+      const s = merged[i];
+      if (s.end - s.start >= minSegmentLength) continue; // not short, skip
+
+      const prev = i > 0 ? merged[i - 1] : null;
+      const next = i < merged.length - 1 ? merged[i + 1] : null;
+      const gapToPrev = prev ? s.start - prev.end : Infinity;
+      const gapToNext = next ? next.start - s.end : Infinity;
+      const nearPrev  = gapToPrev <= orphanAbsorb;
+      const nearNext  = gapToNext <= orphanAbsorb;
+
+      if (!nearPrev && !nearNext) continue; // truly isolated — Pass 3 will drop it
+
+      if (nearPrev && (!nearNext || gapToPrev <= gapToNext)) {
+        // Absorb backward: extend the previous segment's end to cover this one.
+        merged[i - 1] = { start: merged[i - 1].start, end: Math.max(merged[i - 1].end, s.end) };
+      } else {
+        // Absorb forward: extend the next segment's start to cover this one.
+        merged[i + 1] = { start: Math.min(merged[i + 1].start, s.start), end: merged[i + 1].end };
+      }
+      merged.splice(i, 1);
+      changed = true;
+      break; // restart — splicing invalidates indices
+    }
+  }
+
+  // Pass 3 — drop stray isolated blips with no neighbor to absorb them.
   const kept = merged.filter((s) => s.end - s.start >= minSegmentLength);
 
-  // Pass 3 — pad and clamp so playback starts/ends on a full word.
+  // Pass 4 — pad and clamp so playback starts/ends on a full word.
   return kept.map((s) => ({
     start: Math.max(0, s.start - padding),
     end:   Math.min(duration, s.end + padding),
