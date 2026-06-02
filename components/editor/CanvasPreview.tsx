@@ -603,18 +603,23 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                     className="absolute top-0 -translate-x-1/2 w-0.5 h-2 rounded-full bg-brand-400"
                   />
                 </div>
-                <input
-                  type="range"
-                  list="speed-ticks"
-                  min={0.25}
-                  max={2}
-                  step={0.01}
-                  value={playbackRate}
-                  onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                  onWheel={(e) => setSpeed(playbackRate + (e.deltaY < 0 ? 0.05 : -0.05))}
-                  className="w-full accent-brand-500 cursor-pointer"
-                  aria-label="Playback speed"
-                />
+                <div className="relative">
+                  {/* White end-caps marking the 0.25x / 2x limits of the track. */}
+                  <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 w-1 h-3.5 rounded-full bg-white" />
+                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 w-1 h-3.5 rounded-full bg-white" />
+                  <input
+                    type="range"
+                    list="speed-ticks"
+                    min={0.25}
+                    max={2}
+                    step={0.01}
+                    value={playbackRate}
+                    onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                    onWheel={(e) => setSpeed(playbackRate + (e.deltaY < 0 ? 0.05 : -0.05))}
+                    className="relative w-full accent-brand-500 cursor-pointer"
+                    aria-label="Playback speed"
+                  />
+                </div>
                 <datalist id="speed-ticks">
                   <option value="0.25" />
                   <option value="1" />
