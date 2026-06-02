@@ -44,13 +44,14 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
+  createDesktopShortcut: false      # handled by installer.nsh customInstall
+  createStartMenuShortcut: false    # handled by installer.nsh customInstall
   shortcutName: Clip
   license: electron-assets/license.txt
   installerSidebar: electron-assets/installerSidebar.bmp
   uninstallerSidebar: electron-assets/installerSidebar.bmp
   installerHeader: electron-assets/installerHeader.bmp
+  include: electron-assets/installer.nsh
   # Silent updates via electron-updater reuse the installer; /S flag skips the
   # wizard. Users who run the installer manually still see the full wizard.
 
