@@ -133,9 +133,9 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   // change because swapping src remounts the element and resets the rate.
   const [playbackRate, setPlaybackRate] = useState(1);
   const [speedExpanded, setSpeedExpanded] = useState(false);
-  // Clamp + snap to the 0.25-step grid between 0.25x and 2x.
+  // Clamp to 0.25x–2x and snap to 0.01 steps (fine-grained).
   const setSpeed = (v: number) =>
-    setPlaybackRate(Math.min(2, Math.max(0.25, Math.round(v * 4) / 4)));
+    setPlaybackRate(Math.min(2, Math.max(0.25, Math.round(v * 100) / 100)));
   useEffect(() => {
     if (mainVideoRef.current) mainVideoRef.current.playbackRate = playbackRate;
     if (musicRef.current) musicRef.current.playbackRate = playbackRate;
@@ -568,10 +568,10 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                   type="range"
                   min={0.25}
                   max={2}
-                  step={0.25}
+                  step={0.01}
                   value={playbackRate}
                   onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                  onWheel={(e) => setSpeed(playbackRate + (e.deltaY < 0 ? 0.25 : -0.25))}
+                  onWheel={(e) => setSpeed(playbackRate + (e.deltaY < 0 ? 0.05 : -0.05))}
                   className="w-full accent-brand-500 cursor-pointer"
                   aria-label="Playback speed"
                 />
