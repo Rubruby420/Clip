@@ -924,6 +924,19 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     setJustSaved(null);
   }
 
+  // Modal: Discard — the user didn't actually want this clip. Delete the
+  // just-saved clip, drop it from local state, and close the dialog (staying
+  // in the editor so they can re-cut). Other saved clips are untouched.
+  async function handleDiscardSaved() {
+    if (!justSaved) return;
+    const clipId = justSaved.id;
+    setProject((prev) =>
+      prev ? { ...prev, clips: prev.clips.filter((c) => c.id !== clipId) } : prev,
+    );
+    setJustSaved(null);
+    await fetch(`/api/clips/${clipId}`, { method: "DELETE" }).catch(() => {});
+  }
+
   // Modal: No — done. Kick off Coach scoring on every saved clip and head
   // back to the project page where scores + thumbnails fill in as Coach
   // finishes each one.
@@ -1302,7 +1315,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
               <button
                 onClick={() => setJustSaved(null)}
                 className="text-surface-500 hover:text-white transition-colors p-1 rounded"
-                title="Dismiss"
+                title="Keep clip & close"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1350,6 +1363,17 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                   </p>
                 </div>
               </button>
+
+              <div className="pt-1 border-t border-surface-700/70">
+                <button
+                  onClick={handleDiscardSaved}
+                  disabled={finalizing}
+                  className="w-full mt-3 px-4 py-2.5 rounded-xl text-red-300 hover:text-red-200 hover:bg-red-900/25 border border-red-900/50 hover:border-red-700/70 transition-colors disabled:opacity-50 text-sm font-medium"
+                  title="Delete the clip I just saved and keep editing"
+                >
+                  Discard this clip — I didn&rsquo;t mean to save it
+                </button>
+              </div>
             </div>
           </div>
         </div>
