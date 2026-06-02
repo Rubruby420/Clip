@@ -31,6 +31,8 @@ extraResources:
       - "!**/.cache/**"
       - "!**/node_modules/.cache/**"
       - "!**/.tmp/**"
+  - from: resources/template.db
+    to: template.db
 
 win:
   target:

@@ -50,6 +50,26 @@ function loadConfig() {
   };
 }
 
+// ── Database init ────────────────────────────────────────────────────────────
+
+// Copy the bundled template DB to userData on first launch so Prisma has a
+// schema-ready database without needing the CLI at runtime.
+function ensureDatabase(config) {
+  const dbPath = config.DATABASE_URL.replace(/^file:/, '');
+  if (!fs.existsSync(dbPath)) {
+    const templatePath = app.isPackaged
+      ? path.join(process.resourcesPath, 'template.db')
+      : path.join(__dirname, '..', 'resources', 'template.db');
+    if (fs.existsSync(templatePath)) {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      fs.copyFileSync(templatePath, dbPath);
+      log.info('Initialised database from template:', dbPath);
+    } else {
+      log.warn('template.db not found — database will be empty');
+    }
+  }
+}
+
 // ── Next.js server ───────────────────────────────────────────────────────────
 
 function getServerPath() {
@@ -198,6 +218,7 @@ app.whenReady().then(async () => {
   const loading = createLoadingWindow();
 
   try {
+    ensureDatabase(config);
     spawnNextServer(config);
     await waitForServer();
     loading.close();
