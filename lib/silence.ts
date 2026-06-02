@@ -95,6 +95,56 @@ export function detectTalkSegments(
   }));
 }
 
+// Group Whisper word-timestamps into conversation segments.
+//
+// Unlike detectTalkSegments (which gates on loudness), this function only
+// fires on real speech — Whisper doesn't emit words over music, bangs, or
+// applause, so those sections are naturally ignored.
+//
+// A "conversation chunk" is a run of words with no gap longer than
+// minSilenceGap. Tune defaults to match detectTalkSegments so clips feel
+// similar in size.
+export function groupSpeechSegments(
+  words: { start: number; end: number }[],
+  duration: number,
+  opts: { minSilenceGap?: number; minSegmentLength?: number; padding?: number } = {},
+): TalkSegment[] {
+  if (!Array.isArray(words) || words.length === 0 || duration <= 0) return [];
+
+  const minSilenceGap    = opts.minSilenceGap    ?? 0.7;
+  const minSegmentLength = opts.minSegmentLength ?? 1.2;
+  const padding          = opts.padding          ?? 0.25;
+
+  // Sort by start time — Whisper is usually in order but be safe.
+  const sorted = [...words].sort((a, b) => a.start - b.start);
+
+  // Pass 1 — merge words separated by < minSilenceGap into one segment.
+  const merged: TalkSegment[] = [];
+  let segStart = sorted[0].start;
+  let segEnd   = sorted[0].end;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const w = sorted[i];
+    if (w.start - segEnd < minSilenceGap) {
+      segEnd = Math.max(segEnd, w.end); // extend
+    } else {
+      merged.push({ start: segStart, end: segEnd });
+      segStart = w.start;
+      segEnd   = w.end;
+    }
+  }
+  merged.push({ start: segStart, end: segEnd });
+
+  // Pass 2 — drop stray single-word blips shorter than minSegmentLength.
+  const kept = merged.filter((s) => s.end - s.start >= minSegmentLength);
+
+  // Pass 3 — pad and clamp so playback starts/ends on a full word.
+  return kept.map((s) => ({
+    start: Math.max(0, s.start - padding),
+    end:   Math.min(duration, s.end + padding),
+  }));
+}
+
 // Map a single 0..1 "sensitivity" dial onto detectTalkSegments options so the
 // UI never exposes raw thresholds. 0 = gentle (only long, clearly-silent gaps
 // are cut), 1 = aggressive (shorter, less-quiet pauses are cut too). 0.5 lands

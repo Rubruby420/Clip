@@ -158,7 +158,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 onClick={handleDetectSpeakers}
                 disabled={detecting}
                 className="flex items-center gap-1.5 px-4 py-2 border border-brand-600 text-brand-300 hover:bg-brand-900/40 disabled:opacity-50 text-sm rounded-lg font-medium transition-colors"
-                title="Auto-find the talking parts of your video and turn each into a clip"
+                title="Find where people are actually talking and turn each conversation into a clip"
               >
                 {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <AudioLines className="w-4 h-4" />}
                 {detecting ? "Detecting…" : "Detect Speakers"}
