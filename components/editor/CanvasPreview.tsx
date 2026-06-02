@@ -592,11 +592,16 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                     2x
                   </button>
                 </div>
-                {/* Tick lines marking the 0.25x / 1x / 2x endpoints on the track. */}
-                <div className="relative h-1.5 mb-0.5">
-                  <span style={{ left: "0%" }} className="absolute top-0 w-px h-1.5 bg-surface-500" />
-                  <span style={{ left: "42.857%" }} className="absolute top-0 -translate-x-1/2 w-px h-1.5 bg-surface-300" />
-                  <span style={{ left: "100%" }} className="absolute top-0 -translate-x-full w-px h-1.5 bg-surface-500" />
+                {/* Tick lines marking the 0.25x / 1x / 2x endpoints, plus a
+                    brand-colored line at the current speed's position. */}
+                <div className="relative h-2 mb-0.5">
+                  <span style={{ left: "0%" }} className="absolute top-0.5 w-px h-1.5 bg-surface-500" />
+                  <span style={{ left: "42.857%" }} className="absolute top-0.5 -translate-x-1/2 w-px h-1.5 bg-surface-300" />
+                  <span style={{ left: "100%" }} className="absolute top-0.5 -translate-x-full w-px h-1.5 bg-surface-500" />
+                  <span
+                    style={{ left: `${((playbackRate - 0.25) / 1.75) * 100}%` }}
+                    className="absolute top-0 -translate-x-1/2 w-0.5 h-2 rounded-full bg-brand-400"
+                  />
                 </div>
                 <input
                   type="range"
