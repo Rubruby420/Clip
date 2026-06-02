@@ -128,6 +128,16 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
     }
   }
 
+  // Preview playback speed (preview-only — doesn't affect trims/export). Applied
+  // to the main <video> and the synced music <audio>. Re-applied on videoSrc
+  // change because swapping src remounts the element and resets the rate.
+  const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+  const [playbackRate, setPlaybackRate] = useState(1);
+  useEffect(() => {
+    if (mainVideoRef.current) mainVideoRef.current.playbackRate = playbackRate;
+    if (musicRef.current) musicRef.current.playbackRate = playbackRate;
+  }, [playbackRate, videoSrc, layout.musicUrl]);
+
   // Settings popover (opened by the gear in the control bar). Closes on Escape
   // or a click outside the gear+popover wrapper. settingsRef wraps both so
   // "inside" is well-defined.
@@ -392,6 +402,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
           if (t >= endTime) v.pause();
         }}
         onLoadedMetadata={(e) => {
+          e.currentTarget.playbackRate = playbackRate;
           onLoadedMetadata(e.currentTarget.duration);
           // Snap to the first frame the user should see: the start of the
           // arranged sequence in splice mode, else the trimmed segment start.
@@ -516,16 +527,28 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
           <div
             role="menu"
             aria-hidden={!settingsOpen}
-            className={`absolute bottom-10 right-0 z-40 w-44 rounded-xl bg-surface-800 border border-surface-600 shadow-2xl p-1.5 text-sm origin-bottom-right transition-all duration-150 ease-out motion-reduce:transition-none ${
+            className={`absolute bottom-10 right-0 z-40 w-48 rounded-xl bg-surface-800 border border-surface-600 shadow-2xl p-1.5 text-sm origin-bottom-right transition-all duration-150 ease-out motion-reduce:transition-none ${
               settingsOpen
                 ? "opacity-100 scale-100 translate-y-0"
                 : "opacity-0 scale-95 translate-y-1 pointer-events-none"
             }`}
           >
-            <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
-              Settings
+            <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
+              Playback speed
             </p>
-            <p className="px-2 py-1.5 text-[12px] text-surface-400">Options coming soon</p>
+            <div className="grid grid-cols-3 gap-1">
+              {SPEEDS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setPlaybackRate(s)}
+                  className={`px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                    playbackRate === s ? "bg-brand-600 text-white" : "text-surface-300 hover:bg-surface-700"
+                  }`}
+                >
+                  {s === 1 ? "Normal" : `${s}x`}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <button
