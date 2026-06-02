@@ -1,0 +1,57 @@
+name: Build and Release
+
+# Triggers when you push a version tag: git tag v1.0.0 && git push --tags
+# The workflow builds the NSIS installer on Windows, then publishes it to
+# the GitHub Release. Installed copies of Clip detect the new release via
+# electron-updater and auto-download + install silently.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client (Windows binary)
+        run: npx prisma generate
+        env:
+          DATABASE_URL: "file:./build-temp.db"
+
+      - name: Build Next.js (standalone output)
+        run: npm run build
+        env:
+          # Placeholder values — real API keys are provided by the user at
+          # runtime via {AppData}/Clip/clip-config.json, not baked into the build.
+          OPENAI_API_KEY:       "build-placeholder"
+          ASSEMBLYAI_API_KEY:   "build-placeholder"
+          YOUTUBE_API_KEY:      "build-placeholder"
+          JAMENDO_CLIENT_ID:    "build-placeholder"
+          DATABASE_URL:         "file:./build-temp.db"
+          CLIP_STORAGE_DIR:     "./build-temp-storage"
+
+      - name: Copy static files into standalone tree
+        run: node scripts/prepare-electron-build.js
+
+      - name: Bundle Electron main process
+        run: npm run electron:bundle
+
+      - name: Build and publish installer
+        run: npx electron-builder --win --publish always
+        env:
+          # GITHUB_TOKEN is automatically available in Actions — no secret setup needed.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

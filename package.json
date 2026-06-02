@@ -2,13 +2,20 @@
   "name": "clip",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "electron:dev": "electron .",
+    "electron:bundle": "esbuild electron/main.js --bundle --platform=node --target=node18 --external:electron --log-level=warning --outfile=electron/main.dist.js",
+    "electron:prepare": "next build && node scripts/prepare-electron-build.js",
+    "electron:pack": "npm run electron:prepare && npm run electron:bundle && electron-builder --dir",
+    "electron:build": "npm run electron:prepare && npm run electron:bundle && electron-builder --win --publish never",
+    "electron:release": "npm run electron:prepare && npm run electron:bundle && electron-builder --win --publish always"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -39,6 +46,11 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.5.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.3",
+    "esbuild": "^0.24.2",
     "eslint": "^8",
     "eslint-config-next": "^15.3.2",
     "postcss": "^8",

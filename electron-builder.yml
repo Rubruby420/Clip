@@ -1,0 +1,59 @@
+# electron-builder configuration for the Clip desktop app.
+#
+# Build:   npm run electron:build    → produces dist/Clip-Setup-x.y.z.exe
+# Release: npm run electron:release  → same, then publishes to GitHub Releases
+#
+# The installed app checks GitHub Releases on startup and every 4 hours.
+# When a new release is found, the NSIS installer is downloaded and run
+# silently; the app restarts on the new version automatically.
+
+appId: com.rubruby420.clip
+productName: Clip
+copyright: "Copyright © 2026"
+
+# electron/main.js is bundled into main.dist.js by esbuild before packaging
+# (npm run electron:bundle). The bundle inlines electron-updater + electron-log
+# so the asar has no node_modules at all — keeps the installer small.
+main: electron/main.dist.js
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - electron/main.dist.js
+  - electron/preload.js
+  - package.json
+
+# The Next.js standalone server lives outside the asar so its own
+# node_modules (ffmpeg-static, @prisma/client, etc.) can run as normal
+# Node.js files without asar extraction issues.
+extraResources:
+  - from: .next/standalone
+    to: app
+    filter:
+      - "**/*"
+      - "!**/.cache/**"
+      - "!**/node_modules/.cache/**"
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # Add build/icon.ico (256x256 ICO) to give the app a proper icon.
+  # Without it, electron-builder falls back to the default Electron icon.
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Clip
+  # Silent updates via electron-updater reuse the installer; /S flag skips the
+  # wizard. Users who run the installer manually still see the full wizard.
+
+publish:
+  provider: github
+  owner: Rubruby420
+  repo: Clip
+  releaseType: release

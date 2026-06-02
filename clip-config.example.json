@@ -1,0 +1,9 @@
+{
+  "OPENAI_API_KEY":      "sk-...",
+  "ASSEMBLYAI_API_KEY":  "...",
+  "YOUTUBE_API_KEY":     "...",
+  "JAMENDO_CLIENT_ID":   "...",
+
+  "DATABASE_URL":    "file:C:/Users/YourName/AppData/Roaming/Clip/clip.db",
+  "CLIP_STORAGE_DIR": "C:/Users/YourName/AppData/Roaming/Clip/storage"
+}

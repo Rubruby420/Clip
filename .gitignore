@@ -47,6 +47,11 @@ venv/
 .tmp/
 *.tsbuildinfo
 
+# Electron build artifacts
+electron/main.dist.js
+build-temp.db
+build-temp-storage/
+
 # SQLite database (recreate with: npm run db:push)
 prisma/*.db
 prisma/*.db-journal
