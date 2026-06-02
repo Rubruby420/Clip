@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useRef, useState } from "react";
-import { Play, Pause, Maximize, Minimize, Settings } from "lucide-react";
+import { Play, Pause, Maximize, Minimize, Settings, Clock, Flame } from "lucide-react";
 import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
@@ -533,6 +533,13 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                 : "opacity-0 scale-95 translate-y-1 pointer-events-none"
             }`}
           >
+            {playbackRate !== 1 && (
+              <div className="mx-1 mb-1.5 flex items-center gap-1 rounded-md bg-orange-500/15 border border-orange-500/30 px-2 py-1 text-[11px] font-semibold text-orange-300">
+                <Clock className="w-3 h-3" />
+                <Flame className="w-3 h-3" />
+                <span>{playbackRate}x</span>
+              </div>
+            )}
             <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
               Playback speed
             </p>
