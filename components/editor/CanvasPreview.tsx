@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useRef, useState } from "react";
-import { Play, Pause, Maximize, Minimize } from "lucide-react";
+import { Play, Pause, Maximize, Minimize, Settings } from "lucide-react";
 import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
@@ -30,6 +30,9 @@ interface Props {
   // backward). When non-empty it takes over playback — `skipRanges` is
   // ignored and the trim snap is suppressed. Undefined = normal single-range.
   playSequence?: { start: number; end: number }[];
+  // Optional: opens preview settings. Wired by the parent; the gear button in
+  // the control bar calls it (no-op if not provided).
+  onSettings?: () => void;
 }
 
 function getAspectClass(ratio: string) {
@@ -92,7 +95,7 @@ function CaptionOverlay({ words, currentTime, config, enabled }: {
 const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   videoSrc, words, currentTime, onTimeUpdate, onLoadedMetadata,
   captionConfig, captionsEnabled, layout, startTime, endTime, skipRanges,
-  playSequence,
+  playSequence, onSettings,
 }, ref) => {
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
@@ -480,6 +483,14 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
         <span className="text-white text-[10px] font-mono tabular-nums shrink-0">
           {formatTime(localTime)} / {formatTime(clipDuration)}
         </span>
+        <button
+          onClick={() => onSettings?.()}
+          className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/15 flex items-center justify-center shrink-0 transition-colors"
+          aria-label="Settings"
+          title="Settings"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
         <button
           onClick={toggleFullscreen}
           className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/15 flex items-center justify-center shrink-0 transition-colors"
