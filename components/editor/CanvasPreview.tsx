@@ -133,9 +133,14 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   // change because swapping src remounts the element and resets the rate.
   const [playbackRate, setPlaybackRate] = useState(1);
   const [speedExpanded, setSpeedExpanded] = useState(false);
-  // Clamp to 0.25x–2x and snap to 0.01 steps (fine-grained).
-  const setSpeed = (v: number) =>
-    setPlaybackRate(Math.min(2, Math.max(0.25, Math.round(v * 100) / 100)));
+  // Clamp to 0.25x–2x and snap to 0.01 steps (fine-grained), with a "magnet"
+  // at 1x: anything within ±0.04 of 1 snaps to exactly 1x so it's easy to land
+  // on normal speed.
+  const setSpeed = (v: number) => {
+    let s = Math.min(2, Math.max(0.25, Math.round(v * 100) / 100));
+    if (Math.abs(s - 1) <= 0.04) s = 1;
+    setPlaybackRate(s);
+  };
   useEffect(() => {
     if (mainVideoRef.current) mainVideoRef.current.playbackRate = playbackRate;
     if (musicRef.current) musicRef.current.playbackRate = playbackRate;
@@ -559,13 +564,37 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
             </button>
             {speedExpanded && (
               <div className="px-2 pt-2 pb-1">
-                <div className="flex items-center justify-between text-[10px] text-surface-500 mb-1">
-                  <span>0.25x</span>
-                  <span className="text-white font-semibold text-[11px] tabular-nums">{playbackRate}x</span>
-                  <span>2x</span>
+                {/* Quick-jump markers, positioned along the track. 1x sits at
+                    (1-0.25)/1.75 = 42.857% and is emphasized (the magnet). */}
+                <div className="relative h-4 mb-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSpeed(0.25)}
+                    style={{ left: "0%" }}
+                    className="absolute top-0 text-[10px] text-surface-400 hover:text-white transition-colors"
+                  >
+                    0.25x
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpeed(1)}
+                    style={{ left: "42.857%" }}
+                    className="absolute top-0 -translate-x-1/2 text-[10px] font-bold text-surface-200 hover:text-white transition-colors"
+                  >
+                    1x
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpeed(2)}
+                    style={{ left: "100%" }}
+                    className="absolute top-0 -translate-x-full text-[10px] text-surface-400 hover:text-white transition-colors"
+                  >
+                    2x
+                  </button>
                 </div>
                 <input
                   type="range"
+                  list="speed-ticks"
                   min={0.25}
                   max={2}
                   step={0.01}
@@ -575,6 +604,11 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
                   className="w-full accent-brand-500 cursor-pointer"
                   aria-label="Playback speed"
                 />
+                <datalist id="speed-ticks">
+                  <option value="0.25" />
+                  <option value="1" />
+                  <option value="2" />
+                </datalist>
               </div>
             )}
           </div>
