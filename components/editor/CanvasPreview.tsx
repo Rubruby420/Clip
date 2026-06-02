@@ -513,17 +513,20 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
-          {settingsOpen && (
-            <div
-              role="menu"
-              className="absolute bottom-10 right-0 z-40 w-44 rounded-xl bg-surface-800 border border-surface-600 shadow-2xl p-1.5 text-sm"
-            >
-              <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
-                Settings
-              </p>
-              <p className="px-2 py-1.5 text-[12px] text-surface-400">Options coming soon</p>
-            </div>
-          )}
+          <div
+            role="menu"
+            aria-hidden={!settingsOpen}
+            className={`absolute bottom-10 right-0 z-40 w-44 rounded-xl bg-surface-800 border border-surface-600 shadow-2xl p-1.5 text-sm origin-bottom-right transition-all duration-150 ease-out motion-reduce:transition-none ${
+              settingsOpen
+                ? "opacity-100 scale-100 translate-y-0"
+                : "opacity-0 scale-95 translate-y-1 pointer-events-none"
+            }`}
+          >
+            <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-surface-500">
+              Settings
+            </p>
+            <p className="px-2 py-1.5 text-[12px] text-surface-400">Options coming soon</p>
+          </div>
         </div>
         <button
           onClick={toggleFullscreen}
