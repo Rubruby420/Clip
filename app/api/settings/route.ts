@@ -31,18 +31,25 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = (await request.json()) as Partial<Record<ConfigKey, string>>;
+  let body: Partial<Record<ConfigKey, string>>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
 
   let existing: Record<string, string> = {};
   if (fs.existsSync(configPath)) {
     try {
       existing = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    } catch {}
+    } catch (e) {
+      console.error("clip-config.json parse error — overwriting with new values:", e);
+    }
   }
 
   for (const key of KEYS) {
-    const val = body[key]?.trim();
-    if (val) existing[key] = val;
+    const val = body[key];
+    if (typeof val === "string" && val.trim()) existing[key] = val.trim();
   }
 
   try {
