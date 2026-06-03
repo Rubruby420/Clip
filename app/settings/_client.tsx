@@ -66,7 +66,8 @@ export default function SettingsClient({ firstRun }: { firstRun: boolean }) {
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((data) => setMasked(data));
+      .then((data) => setMasked(data))
+      .catch(() => {});
   }, []);
 
   async function handleSave() {
@@ -91,6 +92,8 @@ export default function SettingsClient({ firstRun }: { firstRun: boolean }) {
       setStatus("error");
     }
   }
+
+  const nothingToSave = Object.values(values).every((v) => !v.trim());
 
   return (
     <div className="min-h-screen bg-surface-900">
@@ -159,12 +162,15 @@ export default function SettingsClient({ firstRun }: { firstRun: boolean }) {
                 </a>
               </div>
               <input
-                type="password"
+                type={values[key] ? "password" : "text"}
+                autoComplete="off"
+                spellCheck={false}
                 value={values[key]}
                 placeholder={masked[key] || "Paste key here…"}
-                onChange={(e) =>
-                  setValues((v) => ({ ...v, [key]: e.target.value }))
-                }
+                onChange={(e) => {
+                  setValues((v) => ({ ...v, [key]: e.target.value }));
+                  if (status === "error") setStatus("idle");
+                }}
                 className="w-full bg-surface-900 border border-surface-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-surface-500 focus:outline-none focus:border-brand-500 font-mono"
               />
             </div>
@@ -174,7 +180,7 @@ export default function SettingsClient({ firstRun }: { firstRun: boolean }) {
         <div className="mt-8 flex justify-end">
           <button
             onClick={handleSave}
-            disabled={status === "saving"}
+            disabled={status === "saving" || nothingToSave}
             className="flex items-center gap-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors"
           >
             {status === "saving" && <Loader2 className="w-4 h-4 animate-spin" />}
