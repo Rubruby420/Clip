@@ -35,17 +35,18 @@ let nextServerProcess = null;
 // Sensible defaults are applied for DATABASE_URL and CLIP_STORAGE_DIR so the
 // app works out of the box without any manual setup (data goes to AppData).
 function loadConfig() {
-  const configPath = path.join(app.getPath('userData'), 'clip-config.json');
+  const userData = app.getPath('userData');
+  const configPath = path.join(userData, 'clip-config.json');
   let saved = {};
   if (fs.existsSync(configPath)) {
     try { saved = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch (e) {
       log.warn('clip-config.json parse error:', e);
     }
   }
-  const userData = app.getPath('userData');
   return {
-    DATABASE_URL:    `file:${path.join(userData, 'clip.db').replace(/\\/g, '/')}`,
+    DATABASE_URL:     `file:${path.join(userData, 'clip.db').replace(/\\/g, '/')}`,
     CLIP_STORAGE_DIR: path.join(userData, 'storage'),
+    CLIP_CONFIG_PATH: configPath,
     ...saved,
   };
 }
