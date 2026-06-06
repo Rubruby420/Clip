@@ -1274,7 +1274,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                     }
                   }}
                   captionConfig={DEFAULT_CAPTION_CONFIG}
-                  captionsEnabled
+                  captionsEnabled={false}
                   layout={DEFAULT_LAYOUT}
                   startTime={0}
                   endTime={tool === "splice" && spliceSegments ? seqTotal(spliceSegments) : (duration || 0)}

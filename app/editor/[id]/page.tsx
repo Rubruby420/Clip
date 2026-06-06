@@ -47,7 +47,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [activeTab, setActiveTab] = useState<Tab>("layout");
   const [layout, setLayout] = useState<LayoutConfig>(DEFAULT_LAYOUT);
   const [captionConfig, setCaptionConfig] = useState<CaptionConfig>(DEFAULT_CAPTION_CONFIG);
-  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [captionsEnabled, setCaptionsEnabled] = useState(false);
 
   const [exporting, setExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
