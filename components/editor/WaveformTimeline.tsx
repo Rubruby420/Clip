@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Scissors, Ban, Undo2, X,
-  ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight,
+  ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight, Image,
 } from "lucide-react";
 import { formatDuration, formatPreciseTime } from "@/lib/utils";
 import { seqTotal, segOffsets, seqToSource } from "@/lib/splice";
@@ -77,6 +77,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 // Tightest visible window (seconds). At this span the track shows ~MIN_VIEW
 // of audio across its full width, far finer than the 0.1s the user needs.
 const MIN_VIEW = 1;
+
 
 // SVG-based waveform timeline. Renders one vertical bar per peak with the
 // trimmed-out regions masked, draggable in/out handles, and a playhead you
@@ -391,53 +392,51 @@ export default function WaveformTimeline({
   return (
     <div className="px-4 py-3 bg-surface-800 border-t border-surface-600 select-none">
       {/* Toolbar: zoom controls + precise playhead readout + nudge */}
-      <div className="flex items-center gap-1.5 mb-2 text-xs text-surface-500">
-        <button
-          type="button"
-          onClick={() => applyZoom(zoomClamped / 1.5, width / 2)}
-          disabled={zoomClamped <= 1}
-          title="Zoom out"
-          className="p-1 rounded hover:bg-surface-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-        >
-          <ZoomOut className="w-3.5 h-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => applyZoom(zoomClamped * 1.5, width / 2)}
-          disabled={zoomClamped >= ZOOM_MAX}
-          title="Zoom in (precise cutting)"
-          className="p-1 rounded hover:bg-surface-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-        >
-          <ZoomIn className="w-3.5 h-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => { setZoom(1); setViewStart(0); }}
-          disabled={zoomClamped <= 1}
-          title="Fit whole video"
-          className="p-1 rounded hover:bg-surface-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-        >
-          <Maximize2 className="w-3.5 h-3.5" />
-        </button>
-        <span className="tabular-nums text-surface-400">{zoomClamped.toFixed(1)}×</span>
+      <div className="flex items-center gap-2 mb-2">
 
-        <div className="ml-auto flex items-center gap-1.5">
-          <button
-            type="button"
+        <button type="button" title="Zoom out" disabled={zoomClamped <= 1}
+          onClick={() => applyZoom(zoomClamped / 1.5, width / 2)}
+          className="p-1.5 rounded-xl bg-orange-400 border-2 border-orange-600 shadow-[3px_3px_0px_#9a3412] hover:shadow-[1px_1px_0px_#9a3412] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-[3px_3px_0px_#9a3412] disabled:translate-x-0 disabled:translate-y-0 transition-all duration-100">
+          <ZoomOut className="w-4 h-4 text-white" strokeWidth={2.5} />
+        </button>
+
+        <button type="button" title="Zoom in" disabled={zoomClamped >= ZOOM_MAX}
+          onClick={() => applyZoom(zoomClamped * 1.5, width / 2)}
+          className="p-1.5 rounded-xl bg-emerald-400 border-2 border-emerald-600 shadow-[3px_3px_0px_#065f46] hover:shadow-[1px_1px_0px_#065f46] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-[3px_3px_0px_#065f46] disabled:translate-x-0 disabled:translate-y-0 transition-all duration-100">
+          <ZoomIn className="w-4 h-4 text-white" strokeWidth={2.5} />
+        </button>
+
+        <button type="button" title="Fit whole video" disabled={zoomClamped <= 1}
+          onClick={() => { setZoom(1); setViewStart(0); }}
+          className="p-1.5 rounded-xl bg-sky-400 border-2 border-sky-600 shadow-[3px_3px_0px_#0369a1] hover:shadow-[1px_1px_0px_#0369a1] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-[3px_3px_0px_#0369a1] disabled:translate-x-0 disabled:translate-y-0 transition-all duration-100">
+          <Maximize2 className="w-4 h-4 text-white" strokeWidth={2.5} />
+        </button>
+
+        <span className="tabular-nums text-xs font-black px-2.5 py-1 rounded-xl bg-surface-700 border-2 border-surface-500 shadow-[3px_3px_0px_#111116] text-white select-none">
+          {zoomClamped.toFixed(1)}×
+        </span>
+
+        <button type="button" title="Background"
+          onClick={() => {/* function TBD */}}
+          className="p-1.5 rounded-xl bg-violet-400 border-2 border-violet-600 shadow-[3px_3px_0px_#5b21b6] hover:shadow-[1px_1px_0px_#5b21b6] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100">
+          <Image className="w-4 h-4 text-white" strokeWidth={2.5} />
+        </button>
+
+        <div className="ml-auto flex items-center gap-2">
+          <button type="button" title="Nudge back 0.1s"
             onClick={() => nudge(-1, false)}
-            title="Nudge back 0.1s (←, Shift+← = 1s)"
-            className="p-1 rounded hover:bg-surface-700 hover:text-white transition-colors"
-          >
-            <ChevronLeft className="w-3.5 h-3.5" />
+            className="p-1.5 rounded-xl bg-pink-400 border-2 border-pink-600 shadow-[3px_3px_0px_#9d174d] hover:shadow-[1px_1px_0px_#9d174d] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100">
+            <ChevronLeft className="w-4 h-4 text-white" strokeWidth={2.5} />
           </button>
-          <span className="text-brand-400 tabular-nums w-16 text-center">{formatPreciseTime(currentTime)}</span>
-          <button
-            type="button"
+
+          <span className="tabular-nums w-16 text-center text-xs font-black text-brand-400 select-none">
+            {formatPreciseTime(currentTime)}
+          </span>
+
+          <button type="button" title="Nudge forward 0.1s"
             onClick={() => nudge(1, false)}
-            title="Nudge forward 0.1s (→, Shift+→ = 1s)"
-            className="p-1 rounded hover:bg-surface-700 hover:text-white transition-colors"
-          >
-            <ChevronRight className="w-3.5 h-3.5" />
+            className="p-1.5 rounded-xl bg-pink-400 border-2 border-pink-600 shadow-[3px_3px_0px_#9d174d] hover:shadow-[1px_1px_0px_#9d174d] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100">
+            <ChevronRight className="w-4 h-4 text-white" strokeWidth={2.5} />
           </button>
         </div>
       </div>
