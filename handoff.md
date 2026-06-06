@@ -1,11 +1,55 @@
 # Clip — Session Handoff
-*Last updated: 2026-06-02*
+*Last updated: 2026-06-06*
 
 ---
 
 ## GOAL
 
 Package Clip as a **Windows installable desktop application** (NSIS `.exe` installer) that **auto-updates itself** when a new version is pushed. The flow: developer bumps the version, tags a release on GitHub → GitHub Actions builds the installer and publishes it → installed copies detect the new release on startup and silently download + apply the update.
+
+---
+
+## Session 2026-06-06 — FlagPal (policy scanner)
+
+### What shipped (commit `2c76e83`)
+
+**FlagPal** is a YouTube / TikTok / Instagram policy scanner accessible from the dashboard header (Flag icon). It scans spoken transcripts for violations — no audio fingerprinting.
+
+#### Features added this session
+1. **Platform selector** — YouTube / TikTok / Instagram toggle on both FlagPal pages (`/flagpal` and `/flagpal/[id]`). The OpenAI scan prompt uses platform-specific policy context (`PLATFORM_CONTEXT` in `lib/flagpal.ts`).
+2. **Outcome classification** — each violation tagged Strike / Demonetized / Age-Gated / Limited Ads with coloured badge.
+3. **Fix suggestions** — green wrench box per violation with an actionable fix.
+4. **Script rewriter** (`/api/flagpal/rewrite`) — lazy on-click fetch returns 2-3 AI-compliant rewrites with copy buttons. Powered by `rewriteViolation()` in `lib/flagpal.ts`.
+5. **Trending topic radar** — `sensitiveTopics` section in results flags contextually risky themes even without a clear policy hit.
+6. **Copyright specifics** — `copyrightedWork` + Content-ID risk badge on copyright violations.
+7. **"Cut at X:XX" link** — clip violations with a timestamp link directly to `/editor/[clipId]?t=TIME`.
+8. **Editor seek-on-open** — editor reads `?t=` URL param and seeks to that time after the clip loads (`app/editor/[id]/page.tsx`).
+9. **Captions off by default** — `captionsEnabled` starts `false` in both the clip editor and the source editor.
+
+#### Transcription fallback in scan route (`app/api/flagpal/scan/route.ts`)
+Three-tier fallback:
+1. Parse `Project.transcription` (stored as `JSON.stringify({text,words,duration})`).
+2. Stitch `Clip.words` arrays into a transcript.
+3. Auto-run Whisper on demand if neither exists (handles manual-mode projects that never ran AI processing).
+
+#### Key files
+| File | Change |
+|------|--------|
+| `lib/flagpal.ts` | Added `FlagOutcome`, `SensitiveTopic`, platform context, `rewriteViolation()` |
+| `app/api/flagpal/scan/route.ts` | 3-tier transcript fallback, `platform` param, auto-Whisper |
+| `app/api/flagpal/rewrite/route.ts` | New — `POST { quote, context, category, platform }` → `{ rewrites }` |
+| `app/flagpal/page.tsx` | Platform selector, checkbox project grid |
+| `app/flagpal/[id]/page.tsx` | Platform selector, checkbox clip grid, "Scan whole video" |
+| `components/flagpal/FlagResults.tsx` | Full results UI — outcome badges, fix box, rewrite section, copyright specifics, trending radar, Cut-at link |
+| `app/editor/[id]/page.tsx` | Seek-on-open via `?t=` param; captions default `false` |
+| `app/source/[id]/page.tsx` | Captions default `false` |
+
+### What's pending
+
+- **End-to-end smoke test** on a talking video: upload → process → FlagPal scan → "Cut at" link → editor seeks correctly → export → download.
+- **Electron build** (carried from previous session — see below).
+
+---
 
 ---
 
