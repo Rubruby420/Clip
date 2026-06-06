@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Upload, Film, Clock, Trash2, Edit3, Plus, Loader2, CheckCircle, AlertCircle, Zap, Settings } from "lucide-react";
+import { Upload, Film, Clock, Trash2, Edit3, Plus, Loader2, CheckCircle, AlertCircle, Zap, Settings, Flag } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { fileUrl } from "@/lib/file-urls";
 
@@ -77,6 +77,14 @@ export default function Dashboard() {
           <span className="text-xs bg-brand-900 text-brand-100 px-2 py-0.5 rounded-full">AI Studio</span>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/flagpal"
+            title="FlagPal"
+            className="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-lg border bg-surface-800 border-surface-600 text-surface-400 hover:text-white hover:bg-surface-700 text-[11px] font-medium leading-none transition-colors"
+          >
+            <Flag className="w-4 h-4" />
+            FlagPal
+          </Link>
           <Link
             href="/settings"
             className="p-2 text-surface-400 hover:text-white hover:bg-surface-700 rounded-lg transition-colors"

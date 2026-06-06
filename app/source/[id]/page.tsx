@@ -859,6 +859,50 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     });
   }
 
+  // Keeps only the green (non-muted, speaking) clips and stitches them together.
+  // Sourced from saved clips instead of amplitude detection — same splice pipeline.
+  function handleRemoveBgNoise() {
+    const speakingClips = (project?.clips ?? []).filter((c) => !c.muted);
+    if (speakingClips.length === 0) {
+      alert("Run Detect Speakers first to find the speaking parts.");
+      return;
+    }
+    const sorted = [...speakingClips].sort((a, b) => a.startTime - b.startTime);
+    const merged: { start: number; end: number }[] = [];
+    for (const clip of sorted) {
+      const last = merged[merged.length - 1];
+      if (last && clip.startTime - last.end < MIN_CUT) {
+        last.end = Math.max(last.end, clip.endTime);
+      } else {
+        merged.push({ start: clip.startTime, end: clip.endTime });
+      }
+    }
+    const next: Segment[] = merged.map((s) => ({ id: crypto.randomUUID(), start: s.start, end: s.end }));
+    if (tool !== "splice") setTool("splice");
+    const prev = spliceSegments;
+    const wasApplied = silenceApplied;
+    setSpliceSegments(next);
+    setSelectedSpliceId(null);
+    setCurrentTime(0);
+    setSilenceApplied(true);
+    if (savedSpliceId) void patchSegments(savedSpliceId, next);
+    history.push({
+      label: "remove bg noise",
+      undo: async () => {
+        setSpliceSegments(prev);
+        setSilenceApplied(wasApplied);
+        setCurrentTime(0);
+        if (savedSpliceId && prev) await patchSegments(savedSpliceId, prev);
+      },
+      redo: async () => {
+        setSpliceSegments(next);
+        setSilenceApplied(true);
+        setCurrentTime(0);
+        if (savedSpliceId) await patchSegments(savedSpliceId, next);
+      },
+    });
+  }
+
   // Live sensitivity tweak. Once silences have been removed, dragging the
   // slider re-detects and updates the sequence in place. These micro-edits are
   // intentionally NOT pushed onto the undo stack — the single "remove silences"
@@ -1293,6 +1337,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           spliceSegments={tool === "splice" ? (spliceSegments ?? []) : []}
           selectedSpliceId={selectedSpliceId}
           onAddSplicePoint={tool === "splice" ? addSplicePoint : undefined}
+          onRemoveBgNoise={handleRemoveBgNoise}
         />
         {tool === "splice" && (
           <>

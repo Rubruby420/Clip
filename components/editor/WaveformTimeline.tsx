@@ -62,6 +62,7 @@ interface Props {
   spliceSegments?: { id: string; start: number; end: number }[];
   selectedSpliceId?: string | null;
   onAddSplicePoint?: () => void;
+  onRemoveBgNoise?: () => void;
 }
 
 // Drag targets. The trim handles + playhead are the originals; the three
@@ -92,6 +93,7 @@ export default function WaveformTimeline({
   pendingMuteStart = null,
   onMuteRangeChange, onMuteDelete, minCut = 0.3,
   spliceMode = false, spliceSegments = [], selectedSpliceId = null, onAddSplicePoint,
+  onRemoveBgNoise,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
@@ -416,9 +418,10 @@ export default function WaveformTimeline({
           {zoomClamped.toFixed(1)}×
         </span>
 
-        <button type="button" title="Background"
-          onClick={() => {/* function TBD */}}
-          className="p-1.5 rounded-xl bg-violet-400 border-2 border-violet-600 shadow-[3px_3px_0px_#5b21b6] hover:shadow-[1px_1px_0px_#5b21b6] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100">
+        <button type="button" title="Remove BG Noise"
+          onClick={onRemoveBgNoise}
+          disabled={!onRemoveBgNoise}
+          className="p-1.5 rounded-xl bg-violet-400 border-2 border-violet-600 shadow-[3px_3px_0px_#5b21b6] hover:shadow-[1px_1px_0px_#5b21b6] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100 disabled:opacity-40 disabled:pointer-events-none">
           <Image className="w-4 h-4 text-white" strokeWidth={2.5} />
         </button>
 
