@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { scanForViolations, type FlagReport } from "@/lib/flagpal";
+import { scanForViolations, type FlagReport, type FlagPlatform } from "@/lib/flagpal";
 import { transcribeAudio } from "@/lib/whisper";
 import { extractAudio, tmpPath } from "@/lib/ffmpeg";
 import { resolveStorage } from "@/lib/storage";
@@ -63,9 +63,11 @@ async function transcribeProject(project: {
 // side-effect when a manual-mode project has no stored transcript.
 export async function POST(req: NextRequest) {
   let items: ScanItem[] = [];
+  let platform: FlagPlatform = "youtube";
   try {
     const body = await req.json();
     items = Array.isArray(body.items) ? body.items : [];
+    if (["youtube", "tiktok", "instagram"].includes(body.platform)) platform = body.platform;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
@@ -130,6 +132,7 @@ export async function POST(req: NextRequest) {
             transcript,
             durationSec: project.duration ?? undefined,
             words: words.length ? words : undefined,
+            platform,
           });
           return { kind: item.kind, id: item.id, title: project.title, report };
 
@@ -182,6 +185,7 @@ export async function POST(req: NextRequest) {
             transcript,
             durationSec: clip.endTime - clip.startTime,
             words: words.length ? words : undefined,
+            platform,
           });
           return { kind: item.kind, id: item.id, title: clip.title, report };
         }

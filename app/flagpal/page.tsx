@@ -10,6 +10,7 @@ import {
 import { formatDuration } from "@/lib/utils";
 import { fileUrl } from "@/lib/file-urls";
 import FlagResults, { type ScanResult } from "@/components/flagpal/FlagResults";
+import type { FlagPlatform } from "@/lib/flagpal";
 
 interface ProjectClip { id: string; score: number | null; thumbnailUrl: string | null }
 interface Project {
@@ -33,6 +34,7 @@ export default function FlagPalPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [platform, setPlatform] = useState<FlagPlatform>("youtube");
   const [scanning, setScanning] = useState(false);
   const [results, setResults] = useState<ScanResult[] | null>(null);
 
@@ -66,7 +68,7 @@ export default function FlagPalPage() {
       const res = await fetch("/api/flagpal/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items, platform }),
       });
       const data = await res.json();
       setResults(data.results ?? []);
@@ -95,7 +97,23 @@ export default function FlagPalPage() {
             <Flag className="w-4 h-4 text-white" />
           </div>
           <span className="text-xl font-bold text-white tracking-tight">FlagPal</span>
-          <span className="text-xs bg-brand-900 text-brand-100 px-2 py-0.5 rounded-full">YouTube Policy Scanner</span>
+          <span className="text-xs bg-brand-900 text-brand-100 px-2 py-0.5 rounded-full">Policy Scanner</span>
+        </div>
+
+        {/* Platform selector */}
+        <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded-lg p-1">
+          {(["youtube","tiktok","instagram"] as FlagPlatform[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPlatform(p)}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors capitalize ${
+                platform === p ? "bg-brand-600 text-white" : "text-surface-400 hover:text-white"
+              }`}
+            >
+              {p === "instagram" ? "Instagram" : p === "tiktok" ? "TikTok" : "YouTube"}
+            </button>
+          ))}
         </div>
 
         <div className="ml-auto flex items-center gap-3">
@@ -251,7 +269,7 @@ export default function FlagPalPage() {
 
       {/* Results modal */}
       {results && (
-        <FlagResults results={results} onClose={() => setResults(null)} />
+        <FlagResults results={results} platform={platform} onClose={() => setResults(null)} />
       )}
     </div>
   );

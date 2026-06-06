@@ -10,6 +10,7 @@ import {
 import { formatDuration } from "@/lib/utils";
 import { fileUrl } from "@/lib/file-urls";
 import FlagResults, { type ScanResult } from "@/components/flagpal/FlagResults";
+import type { FlagPlatform } from "@/lib/flagpal";
 
 interface Clip {
   id: string; title: string; startTime: number; endTime: number;
@@ -35,6 +36,7 @@ export default function FlagPalProjectPage({ params }: { params: Promise<{ id: s
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [platform, setPlatform] = useState<FlagPlatform>("youtube");
   const [scanning, setScanning] = useState(false);
   const [results, setResults] = useState<ScanResult[] | null>(null);
 
@@ -70,7 +72,7 @@ export default function FlagPalProjectPage({ params }: { params: Promise<{ id: s
       const res = await fetch("/api/flagpal/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items, platform }),
       });
       const data = await res.json();
       setResults(data.results ?? []);
@@ -88,7 +90,7 @@ export default function FlagPalProjectPage({ params }: { params: Promise<{ id: s
       const res = await fetch("/api/flagpal/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: [{ kind: "project", id: project.id }] }),
+        body: JSON.stringify({ items: [{ kind: "project", id: project.id }], platform }),
       });
       const data = await res.json();
       setResults(data.results ?? []);
@@ -137,6 +139,22 @@ export default function FlagPalProjectPage({ params }: { params: Promise<{ id: s
         </div>
         <span className="text-surface-500">/</span>
         <span className="text-white font-medium truncate max-w-xs">{project.title}</span>
+
+        {/* Platform selector */}
+        <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded-lg p-1 ml-4">
+          {(["youtube","tiktok","instagram"] as FlagPlatform[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPlatform(p)}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                platform === p ? "bg-brand-600 text-white" : "text-surface-400 hover:text-white"
+              }`}
+            >
+              {p === "instagram" ? "Instagram" : p === "tiktok" ? "TikTok" : "YouTube"}
+            </button>
+          ))}
+        </div>
 
         <div className="ml-auto flex items-center gap-3">
           {project.clips.length > 0 && (
@@ -286,7 +304,7 @@ export default function FlagPalProjectPage({ params }: { params: Promise<{ id: s
 
       {/* Results modal */}
       {results && (
-        <FlagResults results={results} onClose={() => setResults(null)} />
+        <FlagResults results={results} platform={platform} onClose={() => setResults(null)} />
       )}
     </div>
   );

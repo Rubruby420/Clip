@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, use, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
@@ -32,6 +33,8 @@ type ExportAspect = "9:16" | "16:9" | "1:1";
 
 export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
+  const seekOnOpen = searchParams.get("t");
   const [clip, setClip] = useState<Clip | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -105,8 +108,14 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         setVideoSrc(fileUrl(project.proxyUrl || project.originalUrl));
         setHasProxy(Boolean(project.proxyUrl));
       }
+      // If navigated from FlagPal with ?t=X, seek to that timestamp
+      if (seekOnOpen) {
+        const t = Number(seekOnOpen);
+        if (!isNaN(t) && t >= 0) setCurrentTime(t);
+      }
       setLoading(false);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Auto-save layout/caption changes
