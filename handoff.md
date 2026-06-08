@@ -1,11 +1,42 @@
 # Clip — Session Handoff
-*Last updated: 2026-06-06*
+*Last updated: 2026-06-07*
 
 ---
 
 ## GOAL
 
 Package Clip as a **Windows installable desktop application** (NSIS `.exe` installer) that **auto-updates itself** when a new version is pushed. The flow: developer bumps the version, tags a release on GitHub → GitHub Actions builds the installer and publishes it → installed copies detect the new release on startup and silently download + apply the update.
+
+---
+
+## Session 2026-06-07 — Electron build + dashboard sort/filter
+
+### What shipped
+
+1. **Electron build — first successful end-to-end run.**
+   Output: `C:\Users\tania\ClipDist\Clip Setup 0.1.0.exe` (+ blockmap for auto-updater).
+   Fixed two build blockers en route:
+   - `FlagResults.tsx` — unescaped `"` quotes in JSX (two sites) → `&ldquo;`/`&rdquo;`
+   - `flagpal/scan/route.ts` — `sensitiveTopics: []` missing from error-fallback and `noSpeech()` objects (TypeScript error, added last session)
+   Build pipeline: `next build` → `prepare-electron-build.js` → `esbuild` → `electron-builder --win`.
+   No code-signing cert — installer is unsigned (expected for personal use).
+
+2. **Dashboard sort + filter** (`app/_dashboard.tsx`).
+   Filter pills: All / Ready / Processing / Error (Processing groups uploading+queued+processing).
+   Each non-All pill shows a live count. Sort dropdown: Newest / Oldest / Most clips / Best score.
+   Empty-filter state shows a "Show all" escape link. Pure client-side — no API changes.
+
+### Remaining warnings (non-blocking)
+Five ESLint warnings that appear during `next build` but don't fail it:
+- `flagpal/page.tsx` — `Zap` unused import; ternary-as-expression at line 50
+- `flagpal/[id]/page.tsx` — `CheckCircle` unused import; ternary-as-expression at line 52
+- `WaveformTimeline.tsx:425` — `<img>` missing `alt` prop
+
+### Next steps
+- **Test the installer**: run `C:\Users\tania\ClipDist\Clip Setup 0.1.0.exe`, verify the app loads, confirm storage defaults to `%AppData%\Roaming\Clip\`.
+- **Smoke test** — full end-to-end on a talking video: upload → process → FlagPal scan → Cut-at link → editor seeks → export → download.
+- **To publish a release**: bump version in `package.json`, then `git tag v0.2.0 && git push --tags` — GitHub Actions builds and publishes the installer.
+- **Optional cleanup**: fix the 5 ESLint warnings above.
 
 ---
 

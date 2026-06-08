@@ -197,6 +197,7 @@ export async function POST(req: NextRequest) {
           riskScore: 0,
           summary: `Error: ${msg}`,
           violations: [],
+          sensitiveTopics: [],
         };
         return { kind: item.kind, id: item.id, title: item.id, report: errorReport };
       }
@@ -212,5 +213,6 @@ function noSpeech(): FlagReport {
     riskScore: 0,
     summary: "No speech detected in this video.",
     violations: [],
+    sensitiveTopics: [],
   };
 }

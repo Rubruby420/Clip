@@ -121,7 +121,7 @@ function RewriteSection({ v, platform }: { v: FlagViolation; platform: FlagPlatf
           ) : (
             rewrites.map((r, i) => (
               <div key={i} className="flex items-start gap-1.5 bg-brand-900/20 border border-brand-800/40 rounded-md px-2 py-1.5">
-                <p className="flex-1 text-[11px] text-brand-200 italic">"{r}"</p>
+                <p className="flex-1 text-[11px] text-brand-200 italic">&ldquo;{r}&rdquo;</p>
                 <CopyButton text={r} />
               </div>
             ))
@@ -168,7 +168,7 @@ function ViolationRow({ v, result, platform }: { v: FlagViolation; result: ScanR
 
       {v.quote && (
         <blockquote className="text-[11px] text-surface-400 italic border-l-2 border-surface-600 pl-2 mb-1.5 line-clamp-2">
-          "{v.quote}"
+          &ldquo;{v.quote}&rdquo;
         </blockquote>
       )}
       <p className="text-[11px] text-surface-300 mb-1">{v.explanation}</p>
