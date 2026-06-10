@@ -1,11 +1,66 @@
 # Clip — Session Handoff
-*Last updated: 2026-06-07*
+*Last updated: 2026-06-10*
 
 ---
 
 ## GOAL
 
 Package Clip as a **Windows installable desktop application** (NSIS `.exe` installer) that **auto-updates itself** when a new version is pushed. The flow: developer bumps the version, tags a release on GitHub → GitHub Actions builds the installer and publishes it → installed copies detect the new release on startup and silently download + apply the update.
+
+---
+
+## Session 2026-06-10 — UX polish (8 features across two rounds)
+
+### What shipped — Round 1 (commit `8af22a9`)
+
+1. **Export progress feedback** — single clip export uses SSE (`text/event-stream`); FFmpeg writes `out_time_ms` to stdout via `-progress pipe:1`; the editor shows a live progress fill bar + percentage on the Export button.
+2. **Clip reorder** — HTML5 drag-and-drop on project page cards; custom order persisted in `localStorage["clipOrder:<projectId>"]`; "AI Score / Custom" sort toggle with ✕ reset. No DB changes.
+3. **Batch export** — "Export All" button on project page streams SSE from `POST /api/projects/[id]/batch-export`; per-clip + overall progress bars in a fixed bottom-right overlay; done banner with count.
+4. **Transcript viewer** — "View transcript" button in Caption panel (when words exist) opens `TranscriptModal`: search box, sentence groups with seekable timestamps, click any word to seek to it.
+5. **Caption style previews** — CSS mini-previews for karaoke / bold-pop / minimal / emoji-auto in the Caption panel style grid.
+6. **FlagPal Cut-at link** — carries `?t=N` into the editor which seeks to that timestamp on open. (Already existed as `seekOnOpen` in the editor; wired up this session.)
+7. **Delete after export** — "Delete this clip" button in the export-success modal (confirms, calls `DELETE /api/clips/${id}`, navigates back to project page).
+8. **Style presets** — save/apply/delete named layout+caption combos from a `Presets` dropdown in the editor header; `localStorage["clip:stylePresets"]`, no DB.
+9. **Hover-to-play** — muted looping video overlay on project page clip cards on mouse-enter; prefers 720p proxy; `HoverVideo` component seeks to `clip.startTime` and loops the clip window.
+10. **Text-to-clip search** — search bar above clip grid, client-side word-timestamp search across all clip transcript JSONs; non-matching cards dim; match chip links to `/editor/${id}?t=N`.
+11. **Keyboard shortcuts in editor** — `Space`/`K` play-pause, `J`/`L` ±5s, `←`/`→` ±1s, `Shift+←`/`→` ±0.1s, `I`/`O` set in/out, `E` export; `?` hover-tooltip button in header.
+
+### What shipped — Round 2 (commit `bea75a0`)
+
+12. **SRT subtitle export** — `GET /api/clips/[id]/srt` returns the clip's transcript as an SRT file. `.srt` button in editor header; also appears in the export-success modal alongside the video download button.
+13. **Clip status tags** — `done` / `skip` / `review` pill buttons on every project-page card; optimistic update + `PATCH /api/clips/[id]`. Added `clipStatus String @default("none")` to Prisma schema.
+14. **Logo/watermark overlay** — "Watermark / Logo" section in Layout panel. Upload PNG/WebP → `POST /api/projects/[id]/logo` saves to `D:\clip\<projectId>\logo.png`. Corner position, size (5–40%), opacity (10–100%). Renders live in CanvasPreview; burned into export via FFmpeg `scale`+`format=rgba`+`colorchannelmixer`+`overlay` filter chain.
+15. **Waveform in timeline** — clip editor's trim track now renders soft amplitude bars sampled from `Project.waveform` peaks JSON. 120 bars across the visible trim range; silences visible as valleys.
+
+### One required action before status tags work
+
+The `clipStatus` column is in SQLite already, but the Prisma client binary couldn't be regenerated while the dev server was running (DLL lock). Run once with the server stopped:
+
+```powershell
+# Stop npm run dev first, then:
+$env:DATABASE_URL='file:C:/Users/tania/ClipData/dev.db'; npx prisma db push
+# Restart dev server
+```
+
+### Key files changed this session
+
+| File | Change |
+|------|--------|
+| `app/editor/[id]/page.tsx` | Export SSE, SRT button, transcript modal wiring, logo upload, waveform props |
+| `app/projects/[id]/page.tsx` | Drag reorder, batch export, hover-to-play, transcript search, status tags |
+| `app/api/export/[id]/route.ts` | SSE streaming, logo path passthrough |
+| `app/api/projects/[id]/batch-export/route.ts` | NEW — SSE batch export with logo |
+| `app/api/clips/[id]/srt/route.ts` | NEW — SRT download |
+| `app/api/projects/[id]/logo/route.ts` | NEW — logo upload/delete |
+| `components/editor/CanvasPreview.tsx` | Logo overlay, keyboard shortcuts |
+| `components/editor/Timeline.tsx` | Waveform peaks rendering |
+| `components/editor/LayoutPanel.tsx` | Logo section + onLogoUpload prop |
+| `components/editor/TranscriptModal.tsx` | NEW — searchable transcript viewer |
+| `components/editor/PresetsPanel.tsx` | NEW — style preset save/apply/delete |
+| `components/editor/CaptionPanel.tsx` | CSS style previews, view-transcript button |
+| `lib/ffmpeg.ts` | Logo overlay filter, export SSE progress |
+| `lib/storage.ts` | `projectLogoPath()` helper |
+| `prisma/schema.prisma` | `clipStatus String @default("none")` |
 
 ---
 
