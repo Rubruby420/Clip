@@ -6,6 +6,7 @@ import type { CaptionConfig } from "@/lib/captions";
 import { groupWordsIntoCaptions, autoEmoji } from "@/lib/captions";
 import type { LayoutConfig } from "./LayoutPanel";
 import { seqTotal, seqToSource, sourceToSeq } from "@/lib/splice";
+import { fileUrl } from "@/lib/file-urls";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 
@@ -541,6 +542,23 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
           </div>
         );
       })}
+      {/* Logo / watermark overlay */}
+      {layout.logoUrl && (() => {
+        const pos = layout.logoPosition ?? "bottom-right";
+        const style: React.CSSProperties = {
+          position: "absolute",
+          zIndex: 25,
+          opacity: layout.logoOpacity ?? 0.9,
+          width: `${layout.logoSize ?? 15}%`,
+          pointerEvents: "none",
+          ...(pos === "top-left"     ? { top: "6%",  left:  "5%" } :
+              pos === "top-right"    ? { top: "6%",  right: "5%" } :
+              pos === "bottom-left"  ? { bottom: "14%", left: "5%" } :
+                                       { bottom: "14%", right: "5%" }),
+        };
+        return <img src={fileUrl(layout.logoUrl)} alt="" style={style} />;
+      })()}
+
       <style jsx>{`
         @keyframes beatPop {
           0%   { transform: scale(0.6); opacity: 0; }

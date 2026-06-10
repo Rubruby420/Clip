@@ -57,6 +57,11 @@ export function clipThumbPath(projectId: string, clipId: string): string {
   return `${projectId}/clips/${clipId}/thumb.jpg`;
 }
 
+/** Relative path for a project's watermark/logo PNG. */
+export function projectLogoPath(projectId: string): string {
+  return `${projectId}/logo.png`;
+}
+
 /** Stream a file off disk — used by the file route. */
 export function openReadStream(absPath: string, start?: number, end?: number) {
   return createReadStream(absPath, start != null && end != null ? { start, end } : {});

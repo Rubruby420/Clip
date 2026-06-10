@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { exportClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
-import { resolveStorage, ensureDirFor, clipExportPath } from "@/lib/storage";
+import { resolveStorage, ensureDirFor, clipExportPath, projectLogoPath } from "@/lib/storage";
 import fs from "fs";
 import https from "https";
 import http from "http";
@@ -61,6 +61,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           let overlayDuration = 3;
           let musicUrl = "";
           let musicVolume = 0.25;
+          let logoStoragePath = "";
+          let logoPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right" = "bottom-right";
+          let logoSize = 15;
+          let logoOpacity = 0.9;
           type Beat = { text: string; emoji: string; start: number; end: number; position: "top" | "center" | "bottom" };
           let beats: Beat[] = [];
           try {
@@ -69,6 +73,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             overlayDuration = Number(lc.overlayDuration) || 3;
             musicUrl = lc.musicEnabled === false ? "" : String(lc.musicUrl || "").trim();
             musicVolume = Number(lc.musicVolume ?? 0.25);
+            logoStoragePath = String(lc.logoUrl || "").trim();
+            logoPosition = (["top-left","top-right","bottom-left","bottom-right"].includes(lc.logoPosition)
+              ? lc.logoPosition : "bottom-right") as typeof logoPosition;
+            logoSize = Number(lc.logoSize) || 15;
+            logoOpacity = Number(lc.logoOpacity ?? 0.9);
             if (lc.beatOverlaysEnabled !== false && Array.isArray(lc.beatOverlays)) {
               beats = lc.beatOverlays
                 .map((b: Record<string, unknown>) => ({
@@ -92,6 +101,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             fs.writeFileSync(hookPath, generateOverlayAss({ hookText: overlayText, hookDuration: overlayDuration, beats, videoW: w, videoH: h }));
           }
 
+          const resolvedLogoPath = (() => {
+            if (!logoStoragePath) return undefined;
+            try {
+              const abs = resolveStorage(logoStoragePath);
+              return fs.existsSync(abs) ? abs : undefined;
+            } catch { return undefined; }
+          })();
+
           await exportClip({
             inputPath: videoPath,
             outputPath: outPath,
@@ -103,6 +120,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             musicPath: fs.existsSync(musicPath) ? musicPath : undefined,
             musicVolume,
             blurBackground,
+            logoPath: resolvedLogoPath,
+            logoPosition,
+            logoSize,
+            logoOpacity,
             onProgress: (pct) => send({ type: "progress", idx: i, pct }),
           });
 

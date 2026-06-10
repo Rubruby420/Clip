@@ -4,6 +4,7 @@ import { useRef } from "react";
 
 export type AspectRatio = "9:16" | "16:9" | "1:1";
 export type BgType = "blur" | "color" | "gradient" | "image";
+export type LogoPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 // Timed text/emoji overlay popping in at a specific beat. Auto-populated
 // from the AI Remix clone recipe's editBeats (one per beat).
@@ -36,6 +37,11 @@ export interface LayoutConfig {
   musicTitle: string;
   musicArtist: string;
   musicVolume: number; // 0-1, multiplier mixed under the original clip audio
+  // Watermark / logo overlay.
+  logoUrl: string;           // relative storage path, e.g. "<projectId>/logo.png"
+  logoPosition: LogoPosition;
+  logoSize: number;          // 5–40, percentage of video width
+  logoOpacity: number;       // 0.1–1
 }
 
 export const DEFAULT_LAYOUT: LayoutConfig = {
@@ -56,11 +62,16 @@ export const DEFAULT_LAYOUT: LayoutConfig = {
   musicTitle: "",
   musicArtist: "",
   musicVolume: 0.25,
+  logoUrl: "",
+  logoPosition: "bottom-right",
+  logoSize: 15,
+  logoOpacity: 0.9,
 };
 
 interface Props {
   config: LayoutConfig;
   onChange: (c: LayoutConfig) => void;
+  onLogoUpload?: (file: File) => Promise<void>;
 }
 
 const RATIOS: { label: string; value: AspectRatio; desc: string }[] = [
@@ -76,9 +87,17 @@ const BG_TYPES: { label: string; value: BgType }[] = [
   { label: "Image", value: "image" },
 ];
 
-export default function LayoutPanel({ config, onChange }: Props) {
+const LOGO_POSITIONS: { label: string; value: LogoPosition }[] = [
+  { label: "↖", value: "top-left" },
+  { label: "↗", value: "top-right" },
+  { label: "↙", value: "bottom-left" },
+  { label: "↘", value: "bottom-right" },
+];
+
+export default function LayoutPanel({ config, onChange, onLogoUpload }: Props) {
   const update = (patch: Partial<LayoutConfig>) => onChange({ ...config, ...patch });
   const fileRef = useRef<HTMLInputElement>(null);
+  const logoRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="p-4 space-y-5">
@@ -217,6 +236,89 @@ export default function LayoutPanel({ config, onChange }: Props) {
               {config.bgImageUrl ? "Change image" : "Upload background image"}
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Watermark / logo */}
+      <div>
+        <p className="text-xs text-surface-500 uppercase tracking-wider mb-2">Watermark / Logo</p>
+        <input
+          ref={logoRef}
+          type="file"
+          accept="image/png,image/webp,image/gif"
+          className="hidden"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (f && onLogoUpload) {
+              await onLogoUpload(f);
+              if (logoRef.current) logoRef.current.value = "";
+            }
+          }}
+        />
+        {config.logoUrl ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] text-surface-400 flex-1 truncate">Logo set ✓</p>
+              <button
+                onClick={() => logoRef.current?.click()}
+                className="text-[10px] text-brand-400 hover:text-brand-300 transition-colors"
+              >
+                Replace
+              </button>
+              <button
+                onClick={() => update({ logoUrl: "" })}
+                className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+            {/* Position picker */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-surface-500 w-14">Position</span>
+              <div className="grid grid-cols-4 gap-1">
+                {LOGO_POSITIONS.map((p) => (
+                  <button
+                    key={p.value}
+                    onClick={() => update({ logoPosition: p.value })}
+                    className={`w-7 h-7 rounded border text-xs transition-colors ${
+                      config.logoPosition === p.value
+                        ? "border-brand-500 bg-brand-900/40 text-brand-300"
+                        : "border-surface-600 text-surface-400 hover:border-surface-500"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Size */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-surface-500 w-14">Size</span>
+              <input
+                type="range" min={5} max={40} step={1} value={config.logoSize}
+                onChange={(e) => update({ logoSize: parseInt(e.target.value) })}
+                className="flex-1 accent-brand-500"
+              />
+              <span className="text-[10px] text-white tabular-nums w-7">{config.logoSize}%</span>
+            </div>
+            {/* Opacity */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-surface-500 w-14">Opacity</span>
+              <input
+                type="range" min={0.1} max={1} step={0.05} value={config.logoOpacity}
+                onChange={(e) => update({ logoOpacity: parseFloat(e.target.value) })}
+                className="flex-1 accent-brand-500"
+              />
+              <span className="text-[10px] text-white tabular-nums w-7">{Math.round(config.logoOpacity * 100)}%</span>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => logoRef.current?.click()}
+            className="w-full py-2 border border-dashed border-surface-600 rounded-lg text-xs text-surface-400 hover:border-surface-500 transition-colors"
+          >
+            Upload PNG / WebP watermark
+          </button>
         )}
       </div>
     </div>

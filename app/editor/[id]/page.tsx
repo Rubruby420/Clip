@@ -44,6 +44,9 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [videoSrc, setVideoSrc] = useState("");
   const [hasProxy, setHasProxy] = useState(false);
   const [generatingProxy, setGeneratingProxy] = useState(false);
+  const [projectId, setProjectId] = useState("");
+  const [waveformPeaks, setWaveformPeaks] = useState<number[]>([]);
+  const [videoDuration, setVideoDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [startTime, setStartTime] = useState(0);
@@ -112,6 +115,11 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         const { project } = await projRes.json();
         setVideoSrc(fileUrl(project.proxyUrl || project.originalUrl));
         setHasProxy(Boolean(project.proxyUrl));
+        setProjectId(project.id);
+        if (project.waveform) {
+          try { setWaveformPeaks(JSON.parse(project.waveform)); } catch {}
+        }
+        if (project.duration) setVideoDuration(project.duration);
       }
       // If navigated from FlagPal with ?t=X, seek to that timestamp
       if (seekOnOpen) {
@@ -454,6 +462,16 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               ))}
             </div>
           </div>
+          {words.length > 0 && (
+            <a
+              href={`/api/clips/${id}/srt`}
+              download
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-surface-600 text-surface-400 hover:text-white hover:border-surface-500 text-xs rounded-lg font-medium transition-colors"
+              title="Download subtitle file (.srt) to upload alongside the video on YouTube"
+            >
+              .srt
+            </a>
+          )}
           {exportUrl && (
             <button
               onClick={handleDownload}
@@ -508,7 +526,20 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           </div>
 
           {activeTab === "layout" && (
-            <LayoutPanel config={layout} onChange={setLayout} />
+            <LayoutPanel
+              config={layout}
+              onChange={setLayout}
+              onLogoUpload={async (file) => {
+                if (!projectId) return;
+                const fd = new FormData();
+                fd.append("logo", file);
+                const res = await fetch(`/api/projects/${projectId}/logo`, { method: "POST", body: fd });
+                if (res.ok) {
+                  const { logoUrl } = await res.json();
+                  setLayout((prev) => ({ ...prev, logoUrl }));
+                }
+              }}
+            />
           )}
           {activeTab === "captions" && (
             <CaptionPanel
@@ -702,6 +733,8 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             onStartChange={setStartTime}
             onEndChange={setEndTime}
             onSeek={(t) => setCurrentTime(t)}
+            peaks={waveformPeaks.length > 0 ? waveformPeaks : undefined}
+            videoDuration={videoDuration > 0 ? videoDuration : undefined}
           />
         </div>
       )}
@@ -774,6 +807,15 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             >
               <Download className="w-4 h-4" /> Download to my device
             </button>
+            {words.length > 0 && (
+              <a
+                href={`/api/clips/${id}/srt`}
+                download
+                className="w-full py-2.5 border border-surface-600 hover:border-surface-500 text-surface-400 hover:text-white rounded-xl text-sm transition-colors flex items-center justify-center gap-2 mb-2"
+              >
+                <Download className="w-3.5 h-3.5" /> Download .srt subtitles
+              </a>
+            )}
             <button
               onClick={() => setShowExportSuccess(false)}
               className="w-full py-2 text-surface-500 hover:text-white text-xs transition-colors"

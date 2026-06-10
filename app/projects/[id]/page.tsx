@@ -7,10 +7,12 @@ import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, 
 import { formatDuration } from "@/lib/utils";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
+type ClipStatus = "none" | "done" | "skip" | "review";
+
 interface Clip {
   id: string; title: string; startTime: number; endTime: number;
   score: number | null; thumbnailUrl: string | null; exportUrl: string | null;
-  coachData: string | null; words: string | null;
+  coachData: string | null; words: string | null; clipStatus: ClipStatus;
 }
 
 // Read the Virality Coach verdict cached on a clip.
@@ -98,6 +100,18 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Hover-to-play
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
+
+  async function patchClipStatus(clipId: string, status: ClipStatus) {
+    setProject((p) => p ? {
+      ...p,
+      clips: p.clips.map((c) => c.id === clipId ? { ...c, clipStatus: status } : c),
+    } : p);
+    await fetch(`/api/clips/${clipId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clipStatus: status }),
+    });
+  }
 
   // Text-to-clip search
   const [searchQuery, setSearchQuery] = useState("");
@@ -487,6 +501,27 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           <AlertTriangle className="w-3 h-3" /> Coach: needs work
                         </p>
                       )}
+
+                      {/* Status tags */}
+                      <div className="flex items-center gap-1 mb-3">
+                        {(["done", "skip", "review"] as ClipStatus[]).map((s) => {
+                          const active = clip.clipStatus === s;
+                          const colors: Record<string, string> = {
+                            done:   active ? "bg-green-700 border-green-600 text-white" : "border-surface-700 text-surface-500 hover:border-green-700 hover:text-green-400",
+                            skip:   active ? "bg-surface-600 border-surface-500 text-white" : "border-surface-700 text-surface-500 hover:border-surface-500 hover:text-white",
+                            review: active ? "bg-amber-700 border-amber-600 text-white" : "border-surface-700 text-surface-500 hover:border-amber-700 hover:text-amber-400",
+                          };
+                          return (
+                            <button
+                              key={s}
+                              onClick={() => patchClipStatus(clip.id, active ? "none" : s)}
+                              className={`px-2 py-0.5 rounded border text-[10px] font-medium uppercase tracking-wider transition-colors ${colors[s]}`}
+                            >
+                              {s}
+                            </button>
+                          );
+                        })}
+                      </div>
 
                       {/* Search match chip */}
                       {matchTime !== null && (

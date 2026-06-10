@@ -152,6 +152,10 @@ export interface ExportOptions {
   musicVolume?: number;        // 0-1 multiplier for the music
   blurBackground?: boolean;
   onProgress?: (pct: number) => void; // called with 0-99 during encode, 100 on done
+  logoPath?: string;
+  logoPosition?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  logoSize?: number;    // 5-40, percentage of video width
+  logoOpacity?: number; // 0.1-1
 }
 
 export interface BeatOverlayInput {
@@ -298,12 +302,30 @@ export async function exportClip(opts: ExportOptions): Promise<void> {
     ? `,[v]subtitles='${hookArg}'[v]`
     : "";
 
+  // Logo overlay: scale to `logoSize`% of width, apply opacity, composite
+  // over the composed video at the requested corner position.
+  const hasLogo = !!opts.logoPath;
+  const hasMusic = !!opts.musicPath;
+  const logoIdx = hasMusic ? 2 : 1; // logo input comes after music (if any)
+  const logoW = Math.round(targetW * ((opts.logoSize ?? 15) / 100));
+  const logoPad = 10;
+  const logoPosMap: Record<string, string> = {
+    "top-left":     `${logoPad}:${logoPad}`,
+    "top-right":    `W-w-${logoPad}:${logoPad}`,
+    "bottom-left":  `${logoPad}:H-h-${logoPad}`,
+    "bottom-right": `W-w-${logoPad}:H-h-${logoPad}`,
+  };
+  const logoPosStr = logoPosMap[opts.logoPosition ?? "bottom-right"];
+  const logoOpacity = Math.max(0.1, Math.min(1, opts.logoOpacity ?? 0.9));
+  const logoFilter = hasLogo
+    ? `;[${logoIdx}:v]scale=${logoW}:-1,format=rgba,colorchannelmixer=aa=${logoOpacity}[logo];[v][logo]overlay=${logoPosStr}[v]`
+    : "";
+
   const vMap = "[v]";
 
   // Music mixing: a second input feeds [1:a] which we volume-attenuate then
   // amix with the source audio. The clip audio stays at full volume so the
   // music sits underneath.
-  const hasMusic = !!opts.musicPath;
   const musicVol = Math.max(0, Math.min(1, opts.musicVolume ?? 0.25));
   const audioFilter = hasMusic
     ? `;[1:a]volume=${musicVol},aloop=loop=-1:size=2e9[mus];[0:a][mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`
@@ -318,8 +340,9 @@ export async function exportClip(opts: ExportOptions): Promise<void> {
     "-i", opts.inputPath,
   ];
   if (hasMusic) args.push("-i", opts.musicPath!);
+  if (hasLogo) args.push("-i", opts.logoPath!);
   args.push(
-    "-filter_complex", `${filterComplex}${subtitleFilter}${hookFilter}${audioFilter}`,
+    "-filter_complex", `${filterComplex}${subtitleFilter}${hookFilter}${logoFilter}${audioFilter}`,
     "-map", vMap,
     "-map", aMap,
     "-c:v", "libx264", "-preset", "fast", "-crf", "23",

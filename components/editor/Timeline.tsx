@@ -11,10 +11,39 @@ interface Props {
   onStartChange: (t: number) => void;
   onEndChange: (t: number) => void;
   onSeek: (t: number) => void;
+  // Waveform peaks: one value per bucket, 0-1 normalized.
+  // `videoDuration` must match the peaks array's total time span.
+  peaks?: number[];
+  videoDuration?: number;
+}
+
+// Render 120 amplitude bars across the visible track.
+function WaveformBars({ peaks, videoDuration, duration }: {
+  peaks: number[]; videoDuration: number; duration: number;
+}) {
+  const BAR_COUNT = 120;
+  const bars: number[] = [];
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const t = (i / BAR_COUNT) * duration;
+    const srcIdx = Math.floor((t / videoDuration) * peaks.length);
+    bars.push(peaks[Math.min(srcIdx, peaks.length - 1)] ?? 0);
+  }
+  return (
+    <div className="absolute inset-0 flex items-end gap-px px-px pointer-events-none z-0" aria-hidden>
+      {bars.map((amp, i) => (
+        <div
+          key={i}
+          className="flex-1 bg-brand-500/25 rounded-t-sm"
+          style={{ height: `${Math.max(4, amp * 90)}%` }}
+        />
+      ))}
+    </div>
+  );
 }
 
 export default function Timeline({
   duration, startTime, endTime, currentTime, onStartChange, onEndChange, onSeek,
+  peaks, videoDuration,
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +71,11 @@ export default function Timeline({
         className="relative h-10 bg-surface-700 rounded-lg cursor-pointer overflow-hidden"
         onClick={clickTrack}
       >
+        {/* Waveform amplitude bars (behind everything else) */}
+        {peaks && peaks.length > 0 && videoDuration && videoDuration > 0 && (
+          <WaveformBars peaks={peaks} videoDuration={videoDuration} duration={duration} />
+        )}
+
         {/* Excluded region (before startTime) */}
         <div
           className="absolute top-0 left-0 h-full bg-black/50"
