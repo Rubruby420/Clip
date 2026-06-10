@@ -33,6 +33,10 @@ interface Props {
   // Optional: opens preview settings. Wired by the parent; the gear button in
   // the control bar calls it (no-op if not provided).
   onSettings?: () => void;
+  // Keyboard shortcut callbacks — called when I/O/E are pressed outside an input.
+  onSetIn?: () => void;
+  onSetOut?: () => void;
+  onExport?: () => void;
 }
 
 function getAspectClass(ratio: string) {
@@ -95,7 +99,7 @@ function CaptionOverlay({ words, currentTime, config, enabled }: {
 const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
   videoSrc, words, currentTime, onTimeUpdate, onLoadedMetadata,
   captionConfig, captionsEnabled, layout, startTime, endTime, skipRanges,
-  playSequence, onSettings,
+  playSequence, onSettings, onSetIn, onSetOut, onExport,
 }, ref) => {
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
@@ -293,6 +297,51 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
       v.pause();
     }
   }
+
+  // Global keyboard shortcuts for the editor.
+  // Space/K = play/pause · J/L = -5s/+5s · ←/→ = -1s/+1s · Shift+←/→ = ±0.1s
+  // I = set in-point · O = set out-point · E = open export modal
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || (e.target as HTMLElement)?.isContentEditable) return;
+      const v = mainVideoRef.current;
+      switch (e.key) {
+        case " ": case "k": case "K":
+          e.preventDefault();
+          togglePlay();
+          break;
+        case "j": case "J":
+          e.preventDefault();
+          if (v) v.currentTime = Math.max(startTime, v.currentTime - 5);
+          break;
+        case "l": case "L":
+          e.preventDefault();
+          if (v) v.currentTime = Math.min(endTime, v.currentTime + 5);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          if (v) v.currentTime = Math.max(startTime, v.currentTime - (e.shiftKey ? 0.1 : 1));
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          if (v) v.currentTime = Math.min(endTime, v.currentTime + (e.shiftKey ? 0.1 : 1));
+          break;
+        case "i": case "I":
+          onSetIn?.();
+          break;
+        case "o": case "O":
+          onSetOut?.();
+          break;
+        case "e": case "E":
+          if (!e.ctrlKey && !e.metaKey) onExport?.();
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startTime, endTime, onSetIn, onSetOut, onExport]);
 
   function handleScrub(e: React.ChangeEvent<HTMLInputElement>) {
     const v = mainVideoRef.current;

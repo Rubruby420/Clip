@@ -16,6 +16,7 @@ import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
 import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
 import TranscriptModal from "@/components/editor/TranscriptModal";
+import PresetsPanel from "@/components/editor/PresetsPanel";
 import { useDocumentHistory } from "@/components/editor/useDocumentHistory";
 import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
@@ -400,6 +401,16 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             undoLabel={history.undoLabel}
             redoLabel={history.redoLabel}
           />
+          <PresetsPanel
+            layout={layout}
+            captionConfig={captionConfig}
+            captionsEnabled={captionsEnabled}
+            onApply={(p) => {
+              setLayout(p.layout);
+              setCaptionConfig(p.captionConfig);
+              setCaptionsEnabled(p.captionsEnabled);
+            }}
+          />
           {!hasProxy && clip && (
             <button
               onClick={handleGenerateProxy}
@@ -420,6 +431,29 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             {aiCutting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             AI Cut
           </button>
+          {/* Keyboard shortcuts hint */}
+          <div className="group relative">
+            <button className="w-6 h-6 rounded-full border border-surface-600 text-surface-500 hover:text-white hover:border-surface-400 text-xs font-bold transition-colors flex items-center justify-center">
+              ?
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-2 w-44 bg-surface-800 border border-surface-600 rounded-xl p-3 z-50 opacity-0 group-hover:opacity-100 transition-opacity shadow-xl">
+              <p className="text-[10px] text-surface-500 uppercase tracking-wider mb-2 font-semibold">Shortcuts</p>
+              {[
+                ["Space / K", "Play / pause"],
+                ["J / L", "−5s / +5s"],
+                ["← →", "±1s"],
+                ["Shift ← →", "±0.1s"],
+                ["I", "Set in-point"],
+                ["O", "Set out-point"],
+                ["E", "Export"],
+              ].map(([key, label]) => (
+                <div key={key} className="flex justify-between items-center py-0.5">
+                  <kbd className="text-[10px] bg-surface-700 text-surface-300 px-1.5 py-0.5 rounded font-mono">{key}</kbd>
+                  <span className="text-[10px] text-surface-400">{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
           {exportUrl && (
             <button
               onClick={handleDownload}
@@ -515,6 +549,9 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
                 layout={layout}
                 startTime={startTime}
                 endTime={endTime}
+                onSetIn={() => setStartTime(currentTime)}
+                onSetOut={() => setEndTime(currentTime)}
+                onExport={() => { if (!exporting) setShowExportModal(true); }}
               />
             ) : (
               <div className="aspect-[9/16] bg-surface-800 rounded-xl flex items-center justify-center">
