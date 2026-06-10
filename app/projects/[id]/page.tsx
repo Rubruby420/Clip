@@ -1,9 +1,9 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useRef, useState, use } from "react";
+import { useEffect, useRef, useState, use, useMemo } from "react";
 import Link from "next/link";
-import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines } from "lucide-react";
+import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines, GripVertical } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
@@ -46,8 +46,118 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [detecting, setDetecting] = useState(false);
-  // Guard so the thumbnail backfill is requested at most once per mount.
   const thumbsRequested = useRef(false);
+
+  // Batch export state
+  const [batchExporting, setBatchExporting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    idx: number; total: number; title: string; pct: number;
+  } | null>(null);
+  const [batchDone, setBatchDone] = useState<{ exported: number; total: number } | null>(null);
+
+  // Clip ordering — custom order persisted to localStorage.
+  const [customOrder, setCustomOrder] = useState<string[] | null>(null);
+  const [sortMode, setSortMode] = useState<"score" | "custom">("score");
+  const draggedId = useRef<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(`clipOrder:${id}`);
+    if (stored) {
+      try {
+        setCustomOrder(JSON.parse(stored) as string[]);
+        setSortMode("custom");
+      } catch {}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const orderedClips = useMemo<Clip[]>(() => {
+    const clips = project?.clips ?? [];
+    if (sortMode === "custom" && customOrder) {
+      const map = new Map(clips.map((c) => [c.id, c]));
+      const known = customOrder.map((cid) => map.get(cid)).filter(Boolean) as Clip[];
+      const knownSet = new Set(customOrder);
+      const newOnes = clips.filter((c) => !knownSet.has(c.id));
+      return [...known, ...newOnes];
+    }
+    return clips;
+  }, [project?.clips, customOrder, sortMode]);
+
+  function handleDragStart(clipId: string) {
+    draggedId.current = clipId;
+  }
+
+  function handleDragOver(e: React.DragEvent, clipId: string) {
+    e.preventDefault();
+    setDragOverId(clipId);
+  }
+
+  function handleDrop(targetId: string) {
+    const fromId = draggedId.current;
+    if (!fromId || fromId === targetId) { draggedId.current = null; setDragOverId(null); return; }
+    const newOrder = [...orderedClips];
+    const fromIdx = newOrder.findIndex((c) => c.id === fromId);
+    const toIdx = newOrder.findIndex((c) => c.id === targetId);
+    const [item] = newOrder.splice(fromIdx, 1);
+    newOrder.splice(toIdx, 0, item);
+    const ids = newOrder.map((c) => c.id);
+    setCustomOrder(ids);
+    setSortMode("custom");
+    localStorage.setItem(`clipOrder:${id}`, JSON.stringify(ids));
+    draggedId.current = null;
+    setDragOverId(null);
+  }
+
+  function resetToScoreOrder() {
+    setSortMode("score");
+    setCustomOrder(null);
+    localStorage.removeItem(`clipOrder:${id}`);
+  }
+
+  async function handleBatchExport() {
+    setBatchExporting(true);
+    setBatchProgress(null);
+    setBatchDone(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/batch-export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aspectRatio: "9:16", blurBackground: true }),
+      });
+      if (!res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as Record<string, unknown>;
+            if (evt.type === "start") {
+              setBatchProgress({ idx: Number(evt.idx), total: Number(evt.total), title: String(evt.title), pct: 0 });
+            } else if (evt.type === "progress") {
+              setBatchProgress((p) => p ? { ...p, pct: Number(evt.pct) } : p);
+            } else if (evt.type === "done_clip") {
+              setBatchProgress((p) => p ? { ...p, pct: 100 } : p);
+            } else if (evt.type === "done") {
+              setBatchDone({ exported: Number(evt.exported), total: Number(evt.total) });
+              await fetchProject();
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.error("Batch export error:", err);
+    } finally {
+      setBatchExporting(false);
+    }
+  }
 
   async function fetchProject() {
     const res = await fetch(`/api/projects/${id}`);
@@ -163,6 +273,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <AudioLines className="w-4 h-4" />}
                 {detecting ? "Detecting…" : "Detect Speakers"}
               </button>
+              {project.clips.length > 0 && (
+                <button
+                  onClick={handleBatchExport}
+                  disabled={batchExporting}
+                  className="flex items-center gap-1.5 px-4 py-2 border border-surface-600 text-surface-300 hover:bg-surface-700 disabled:opacity-50 text-sm rounded-lg font-medium transition-colors"
+                  title="Export all clips to MP4"
+                >
+                  {batchExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  {batchExporting ? "Exporting…" : "Export All"}
+                </button>
+              )}
               <Link
                 href={`/source/${project.id}`}
                 className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg font-medium transition-colors"
@@ -198,12 +319,44 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         {/* Clips grid */}
         {project.clips.length > 0 && (
           <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Clips</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Clips</h2>
+              <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded-lg p-0.5 text-xs">
+                <button
+                  onClick={() => { setSortMode("score"); }}
+                  className={`px-3 py-1 rounded transition-colors ${sortMode === "score" ? "bg-brand-600 text-white" : "text-surface-400 hover:text-white"}`}
+                >
+                  AI Score
+                </button>
+                <button
+                  onClick={() => { if (sortMode !== "custom") return; }}
+                  className={`px-3 py-1 rounded transition-colors ${sortMode === "custom" ? "bg-surface-600 text-white" : "text-surface-500 cursor-default"}`}
+                  title={sortMode === "custom" ? "Custom order (drag to reorder)" : "Drag clips to set a custom order"}
+                >
+                  Custom
+                </button>
+                {sortMode === "custom" && (
+                  <button onClick={resetToScoreOrder} className="px-2 py-1 text-surface-500 hover:text-red-400 transition-colors">✕</button>
+                )}
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {project.clips.map((clip) => {
+              {orderedClips.map((clip) => {
                 const duration = clip.endTime - clip.startTime;
+                const isDragging = draggedId.current === clip.id;
+                const isDragTarget = dragOverId === clip.id && draggedId.current !== clip.id;
                 return (
-                  <div key={clip.id} className="bg-surface-800 rounded-xl border border-surface-600 overflow-hidden hover:border-brand-600 transition-colors group">
+                  <div
+                    key={clip.id}
+                    draggable
+                    onDragStart={() => handleDragStart(clip.id)}
+                    onDragOver={(e) => handleDragOver(e, clip.id)}
+                    onDrop={() => handleDrop(clip.id)}
+                    onDragEnd={() => { draggedId.current = null; setDragOverId(null); }}
+                    className={`bg-surface-800 rounded-xl border overflow-hidden transition-colors group select-none ${
+                      isDragTarget ? "border-brand-400 ring-2 ring-brand-400/40" : "border-surface-600 hover:border-brand-600"
+                    } ${isDragging ? "opacity-40" : ""}`}
+                  >
                     {/* Thumbnail */}
                     <div className="relative aspect-video bg-surface-700 overflow-hidden">
                       {clip.thumbnailUrl ? (
@@ -221,6 +374,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           <ScoreBadge score={clip.score} />
                         </div>
                       )}
+                      {/* Drag handle — top-right, visible on hover */}
+                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing bg-black/60 rounded p-1">
+                        <GripVertical className="w-3.5 h-3.5 text-white" />
+                      </div>
                     </div>
 
                     <div className="p-4">
@@ -293,6 +450,56 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
       </main>
+
+      {/* Batch export progress overlay */}
+      {batchExporting && batchProgress && (
+        <div className="fixed bottom-6 right-6 z-50 bg-surface-800 border border-surface-600 rounded-2xl shadow-2xl p-5 w-80">
+          <p className="text-white text-sm font-semibold mb-1">
+            Exporting {batchProgress.idx + 1} / {batchProgress.total}
+          </p>
+          <p className="text-surface-400 text-xs mb-3 truncate">{batchProgress.title}</p>
+          {/* Current clip bar */}
+          <div className="h-1.5 bg-surface-700 rounded-full overflow-hidden mb-1">
+            <div
+              className="h-full bg-brand-500 rounded-full transition-[width] duration-300"
+              style={{ width: `${batchProgress.pct}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] text-surface-500 mb-3">
+            <span>Current clip</span>
+            <span>{batchProgress.pct}%</span>
+          </div>
+          {/* Overall bar */}
+          <div className="h-1 bg-surface-700 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-brand-700 rounded-full transition-[width] duration-300"
+              style={{ width: `${((batchProgress.idx + batchProgress.pct / 100) / batchProgress.total) * 100}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-surface-600 mt-1 text-right">Overall progress</p>
+        </div>
+      )}
+
+      {/* Batch export done banner */}
+      {batchDone && !batchExporting && (
+        <div className="fixed bottom-6 right-6 z-50 bg-surface-800 border border-green-700/60 rounded-2xl shadow-2xl p-5 w-80">
+          <div className="flex items-start gap-3">
+            <CheckCircle className="w-5 h-5 text-green-400 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p className="text-white text-sm font-semibold">
+                {batchDone.exported} / {batchDone.total} clips exported
+              </p>
+              <p className="text-surface-400 text-xs mt-0.5">Download buttons are now visible on each clip.</p>
+            </div>
+            <button
+              onClick={() => setBatchDone(null)}
+              className="text-surface-500 hover:text-white transition-colors text-lg leading-none"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

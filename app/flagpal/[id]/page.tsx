@@ -4,7 +4,7 @@
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import {
-  Flag, ArrowLeft, Film, Clock, Zap, Loader2, AlertCircle, CheckCircle,
+  Flag, ArrowLeft, Film, Clock, Zap, Loader2, AlertCircle,
   ScanSearch, Square, SquareCheck,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
@@ -49,7 +49,7 @@ export default function FlagPalProjectPage({ params }: { params: Promise<{ id: s
   function toggleClip(clipId: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(clipId) ? next.delete(clipId) : next.add(clipId);
+      if (next.has(clipId)) { next.delete(clipId); } else { next.add(clipId); }
       return next;
     });
   }

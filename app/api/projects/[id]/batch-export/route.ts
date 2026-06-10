@@ -1,17 +1,12 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { exportClip, exportSplicedClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
-import {
-  resolveStorage,
-  ensureDirFor,
-  clipExportPath,
-} from "@/lib/storage";
+import { exportClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
+import { resolveStorage, ensureDirFor, clipExportPath } from "@/lib/storage";
 import fs from "fs";
 import https from "https";
 import http from "http";
 import { randomUUID } from "crypto";
 
-// Background music tracks still come from Jamendo as remote URLs.
 async function downloadFile(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -26,57 +21,40 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { aspectRatio = "9:16", blurBackground = true } = await req.json();
+  const { aspectRatio = "9:16", blurBackground = true } = await req.json().catch(() => ({}));
+  const ar = aspectRatio as "9:16" | "16:9" | "1:1";
+
+  const clips = await db.clip.findMany({
+    where: { projectId: id },
+    include: { project: true },
+    orderBy: { score: "desc" },
+  });
 
   const enc = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (data: Record<string, unknown>) => {
+      const send = (data: Record<string, unknown>) =>
         controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
-      };
 
-      const clip = await db.clip.findUnique({ where: { id }, include: { project: true } });
-      if (!clip) {
-        send({ error: "Clip not found" });
-        controller.close();
-        return;
-      }
+      let exported = 0;
+      const total = clips.length;
 
-      const exportId = randomUUID();
-      const videoPath = resolveStorage(clip.project.originalUrl);
-      const outPath = tmpPath(`export_out_${exportId}.mp4`);
-      const srtPath = tmpPath(`export_${exportId}.srt`);
-      const hookPath = tmpPath(`export_hook_${exportId}.ass`);
-      const musicPath = tmpPath(`export_music_${exportId}.mp3`);
+      for (let i = 0; i < clips.length; i++) {
+        const clip = clips[i];
+        send({ type: "start", idx: i, total, title: clip.title });
 
-      const ar = aspectRatio as "9:16" | "16:9" | "1:1";
+        const exportId = randomUUID();
+        const videoPath = resolveStorage(clip.project.originalUrl);
+        const outPath = tmpPath(`batch_out_${exportId}.mp4`);
+        const srtPath = tmpPath(`batch_${exportId}.srt`);
+        const hookPath = tmpPath(`batch_hook_${exportId}.ass`);
+        const musicPath = tmpPath(`batch_music_${exportId}.mp3`);
 
-      try {
-        const splicedSegments = clip.segments
-          ? (JSON.parse(clip.segments) as Array<{ start: number; end: number }>)
-          : null;
-
-        if (Array.isArray(splicedSegments) && splicedSegments.length > 0) {
-          // Spliced clip — report progress per segment.
-          const total = splicedSegments.length;
-          await exportSplicedClip({
-            inputPath: videoPath,
-            outputPath: outPath,
-            segments: splicedSegments,
-            aspectRatio: ar,
-            blurBackground,
-            onSegmentProgress: (segIdx, segPct) => {
-              const overall = Math.round(((segIdx + segPct / 100) / total) * 99);
-              send({ pct: overall });
-            },
-          });
-        } else {
-          // Standard clip — stream FFmpeg progress.
+        try {
           const words = JSON.parse(clip.words) as Array<{ word: string; start: number; end: number }>;
           if (words.length > 0) {
-            const srt = await generateSRT(words, clip.captionStyle);
-            fs.writeFileSync(srtPath, srt);
+            fs.writeFileSync(srtPath, await generateSRT(words, clip.captionStyle));
           }
 
           let overlayText = "";
@@ -105,16 +83,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           } catch {}
 
           if (musicUrl) {
-            try { await downloadFile(musicUrl, musicPath); } catch (e) { console.warn("Music download failed:", e); }
+            try { await downloadFile(musicUrl, musicPath); } catch {}
           }
 
           const w = ar === "16:9" ? 1920 : 1080;
           const h = ar === "16:9" ? 1080 : ar === "9:16" ? 1920 : 1080;
           if (overlayText || beats.length > 0) {
-            fs.writeFileSync(
-              hookPath,
-              generateOverlayAss({ hookText: overlayText, hookDuration: overlayDuration, beats, videoW: w, videoH: h })
-            );
+            fs.writeFileSync(hookPath, generateOverlayAss({ hookText: overlayText, hookDuration: overlayDuration, beats, videoW: w, videoH: h }));
           }
 
           await exportClip({
@@ -128,30 +103,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             musicPath: fs.existsSync(musicPath) ? musicPath : undefined,
             musicVolume,
             blurBackground,
-            onProgress: (pct) => send({ pct }),
+            onProgress: (pct) => send({ type: "progress", idx: i, pct }),
           });
+
+          const exportRel = clipExportPath(clip.projectId, clip.id);
+          const exportAbs = resolveStorage(exportRel);
+          await ensureDirFor(exportAbs);
+          fs.copyFileSync(outPath, exportAbs);
+
+          await db.clip.update({ where: { id: clip.id }, data: { exportUrl: exportRel, exportKey: exportRel } });
+
+          exported++;
+          send({ type: "done_clip", idx: i, exportUrl: exportRel });
+        } catch (err) {
+          console.error(`Batch export error for clip ${clip.id}:`, err);
+          send({ type: "error_clip", idx: i, error: String(err) });
+        } finally {
+          [outPath, srtPath, hookPath, musicPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
         }
-
-        // Move finished mp4 into the clip's storage folder.
-        const exportRel = clipExportPath(clip.projectId, clip.id);
-        const exportAbs = resolveStorage(exportRel);
-        await ensureDirFor(exportAbs);
-        fs.copyFileSync(outPath, exportAbs);
-
-        const updated = await db.clip.update({
-          where: { id },
-          data: { exportUrl: exportRel, exportKey: exportRel },
-        });
-
-        send({ done: true, exportUrl: exportRel, clip: updated });
-      } catch (err) {
-        console.error("Export error:", err);
-        send({ error: String(err) });
-      } finally {
-        void exportId;
-        [outPath, srtPath, hookPath, musicPath].forEach((p) => { try { fs.unlinkSync(p); } catch {} });
-        controller.close();
       }
+
+      send({ type: "done", exported, total });
+      controller.close();
     },
   });
 

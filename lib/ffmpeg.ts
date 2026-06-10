@@ -151,6 +151,7 @@ export interface ExportOptions {
   musicPath?: string;          // background music audio file mixed under the clip
   musicVolume?: number;        // 0-1 multiplier for the music
   blurBackground?: boolean;
+  onProgress?: (pct: number) => void; // called with 0-99 during encode, 100 on done
 }
 
 export interface BeatOverlayInput {
@@ -309,24 +310,54 @@ export async function exportClip(opts: ExportOptions): Promise<void> {
     : "";
   const aMap = hasMusic ? "[aout]" : "0:a?";
 
-  const inputs = [`-i "${opts.inputPath}"`];
-  if (hasMusic) inputs.push(`-i "${opts.musicPath}"`);
+  // Build args array (spawn — no shell quoting needed).
+  const args: string[] = [
+    "-y",
+    "-ss", String(opts.startTime),
+    "-t", String(duration),
+    "-i", opts.inputPath,
+  ];
+  if (hasMusic) args.push("-i", opts.musicPath!);
+  args.push(
+    "-filter_complex", `${filterComplex}${subtitleFilter}${hookFilter}${audioFilter}`,
+    "-map", vMap,
+    "-map", aMap,
+    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart",
+    "-shortest",
+    "-progress", "pipe:1", // machine-readable progress to stdout
+    "-nostats",             // suppress human-readable stats on stderr
+    opts.outputPath,
+  );
 
-  const cmd = [
-    `"${bin}" -y`,
-    `-ss ${opts.startTime}`,
-    `-t ${duration}`,
-    inputs.join(" "),
-    `-filter_complex "${filterComplex}${subtitleFilter}${hookFilter}${audioFilter}"`,
-    `-map ${vMap} -map ${aMap}`,
-    `-c:v libx264 -preset fast -crf 23`,
-    `-c:a aac -b:a 128k`,
-    `-movflags +faststart`,
-    `-shortest`,
-    `"${opts.outputPath}"`,
-  ].join(" ");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(bin, args, { windowsHide: true });
+    let stderrBuf = "";
 
-  await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50 });
+    child.stdout?.on("data", (d: Buffer) => {
+      // FFmpeg -progress writes key=value pairs; out_time_ms is microseconds.
+      const text = d.toString();
+      const m = text.match(/out_time_ms=(\d+)/);
+      if (m && opts.onProgress && duration > 0) {
+        const outSec = parseInt(m[1], 10) / 1_000_000;
+        const pct = Math.min(99, Math.round((outSec / duration) * 100));
+        opts.onProgress(pct);
+      }
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      stderrBuf = (stderrBuf + d.toString()).slice(-2000);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        opts.onProgress?.(100);
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg export exited with code ${code}: ${stderrBuf.slice(-400)}`));
+      }
+    });
+  });
 }
 
 // Render a spliced clip: an ordered list of source-time segments stitched
@@ -343,6 +374,7 @@ export async function exportSplicedClip(opts: {
   segments: { start: number; end: number }[];
   aspectRatio: "9:16" | "16:9" | "1:1";
   blurBackground?: boolean;
+  onSegmentProgress?: (segIdx: number, segPct: number) => void;
 }): Promise<void> {
   const bin = ffmpegBin();
   const targetW = opts.aspectRatio === "16:9" ? 1920 : 1080;
@@ -365,19 +397,38 @@ export async function exportSplicedClip(opts: {
       const dur = Math.max(0.05, seg.end - seg.start);
       const part = tmpPath(`splice_${token}_${i}.mp4`);
       partPaths.push(part);
-      const cmd = [
-        `"${bin}" -y`,
-        `-i "${opts.inputPath}"`,
-        `-ss ${seg.start}`,
-        `-t ${dur}`,
-        `-filter_complex "${filter}"`,
-        `-map [v] -map 0:a?`,
-        `-c:v libx264 -preset fast -crf 23 -r 30`,
-        `-c:a aac -b:a 128k -ar 48000 -ac 2`,
-        `-movflags +faststart`,
-        `"${part}"`,
-      ].join(" ");
-      await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50 });
+      const segArgs = [
+        "-y",
+        "-i", opts.inputPath,
+        "-ss", String(seg.start),
+        "-t", String(dur),
+        "-filter_complex", filter,
+        "-map", "[v]", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-r", "30",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart",
+        "-progress", "pipe:1",
+        "-nostats",
+        part,
+      ];
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(bin, segArgs, { windowsHide: true });
+        let stderrBuf = "";
+        child.stdout?.on("data", (d: Buffer) => {
+          const m = d.toString().match(/out_time_ms=(\d+)/);
+          if (m && opts.onSegmentProgress) {
+            const outSec = parseInt(m[1], 10) / 1_000_000;
+            const pct = Math.min(99, Math.round((outSec / dur) * 100));
+            opts.onSegmentProgress(i, pct);
+          }
+        });
+        child.stderr?.on("data", (d: Buffer) => { stderrBuf = (stderrBuf + d.toString()).slice(-2000); });
+        child.on("error", reject);
+        child.on("close", (code) => {
+          if (code === 0) { opts.onSegmentProgress?.(i, 100); resolve(); }
+          else reject(new Error(`ffmpeg splice seg ${i} exited ${code}: ${stderrBuf.slice(-400)}`));
+        });
+      });
     }
 
     // 2. Concat-demuxer stitch (stream copy — parts share params).

@@ -7,40 +7,48 @@ interface Props {
   onChange: (c: CaptionConfig) => void;
   enabled: boolean;
   onEnabledChange: (v: boolean) => void;
+  onViewTranscript?: () => void;
 }
 
-const STYLES: { value: CaptionStyle; label: string; desc: string; preview: string }[] = [
-  {
-    value: "karaoke",
-    label: "Karaoke",
-    desc: "Word-by-word highlight",
-    preview: "Every word lights up as it's spoken",
-  },
-  {
-    value: "bold-pop",
-    label: "Bold Pop",
-    desc: "2-3 words, punchy slide-in",
-    preview: "Large, impactful text chunks",
-  },
-  {
-    value: "minimal",
-    label: "Minimal",
-    desc: "Clean subtitles",
-    preview: "Simple, readable text",
-  },
-  {
-    value: "emoji-auto",
-    label: "Emoji Auto",
-    desc: "Bold-pop + auto emojis",
-    preview: "Text + relevant emojis 🔥",
-  },
+const STYLES: { value: CaptionStyle; label: string; desc: string }[] = [
+  { value: "karaoke",    label: "Karaoke",    desc: "Word-by-word highlight" },
+  { value: "bold-pop",   label: "Bold Pop",   desc: "2-3 words, punchy" },
+  { value: "minimal",    label: "Minimal",    desc: "Clean subtitles" },
+  { value: "emoji-auto", label: "Emoji Auto", desc: "Bold-pop + emojis" },
 ];
+
+function StylePreview({ style, selected }: { style: CaptionStyle; selected: boolean }) {
+  const base = "w-full h-10 rounded mb-2 bg-black/60 relative overflow-hidden flex items-center justify-center";
+  if (style === "karaoke") return (
+    <div className={base}>
+      <span className="text-[9px] text-white/50">word </span>
+      <span className="text-[9px] font-bold text-yellow-300 mx-0.5 underline underline-offset-1">you</span>
+      <span className="text-[9px] text-white/50"> here</span>
+    </div>
+  );
+  if (style === "bold-pop") return (
+    <div className={base}>
+      <span className={`text-[11px] font-black tracking-wide ${selected ? "text-brand-300" : "text-white"}`} style={{ fontFamily: "Impact, sans-serif", textShadow: "0 1px 3px #000" }}>HEY YOU</span>
+    </div>
+  );
+  if (style === "minimal") return (
+    <div className={base}>
+      <span className="absolute bottom-1 text-[8px] text-white/80 tracking-wide">simple text here</span>
+    </div>
+  );
+  // emoji-auto
+  return (
+    <div className={base}>
+      <span className={`text-[10px] font-bold ${selected ? "text-brand-300" : "text-white"}`} style={{ fontFamily: "Impact, sans-serif" }}>great! 🔥</span>
+    </div>
+  );
+}
 
 const FONTS = ["Impact", "Arial Black", "Bebas Neue", "Montserrat", "Inter", "Comic Sans MS"];
 
 const POSITIONS: CaptionConfig["position"][] = ["top", "center", "bottom"];
 
-export default function CaptionPanel({ config, onChange, enabled, onEnabledChange }: Props) {
+export default function CaptionPanel({ config, onChange, enabled, onEnabledChange, onViewTranscript }: Props) {
   const update = (patch: Partial<CaptionConfig>) => onChange({ ...config, ...patch });
 
   return (
@@ -69,12 +77,13 @@ export default function CaptionPanel({ config, onChange, enabled, onEnabledChang
                 <button
                   key={s.value}
                   onClick={() => update({ style: s.value })}
-                  className={`p-3 rounded-lg border text-left transition-colors ${
+                  className={`p-2 rounded-lg border text-left transition-colors ${
                     config.style === s.value
                       ? "border-brand-500 bg-brand-900/40"
                       : "border-surface-600 hover:border-surface-500"
                   }`}
                 >
+                  <StylePreview style={s.value} selected={config.style === s.value} />
                   <p className={`text-xs font-bold ${config.style === s.value ? "text-brand-300" : "text-white"}`}>{s.label}</p>
                   <p className="text-[10px] text-surface-500 mt-0.5">{s.desc}</p>
                 </button>
@@ -169,6 +178,17 @@ export default function CaptionPanel({ config, onChange, enabled, onEnabledChang
             <span className="text-xs text-white w-8">{config.animationSpeed}x</span>
           </div>
         </>
+      )}
+
+      {onViewTranscript && (
+        <div className="pt-2 border-t border-surface-700">
+          <button
+            onClick={onViewTranscript}
+            className="w-full text-xs text-brand-400 hover:text-brand-300 transition-colors py-1.5"
+          >
+            View transcript
+          </button>
+        </div>
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
@@ -15,6 +15,7 @@ import CaptionPanel from "@/components/editor/CaptionPanel";
 import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
 import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
+import TranscriptModal from "@/components/editor/TranscriptModal";
 import { useDocumentHistory } from "@/components/editor/useDocumentHistory";
 import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
@@ -33,6 +34,7 @@ type ExportAspect = "9:16" | "16:9" | "1:1";
 
 export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const searchParams = useSearchParams();
   const seekOnOpen = searchParams.get("t");
   const [clip, setClip] = useState<Clip | null>(null);
@@ -52,7 +54,9 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [captionConfig, setCaptionConfig] = useState<CaptionConfig>(DEFAULT_CAPTION_CONFIG);
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
 
+  const [showTranscript, setShowTranscript] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<number | null>(null);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [exportAspect, setExportAspect] = useState<ExportAspect>("9:16");
   const [showExportModal, setShowExportModal] = useState(false);
@@ -238,6 +242,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
 
   async function handleExport() {
     setExporting(true);
+    setExportProgress(0);
     setShowExportModal(false);
     setExportError(null);
     try {
@@ -249,19 +254,39 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           blurBackground: layout.bgType === "blur",
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setExportError(data.error || "Export failed. Check the server logs.");
-      } else if (data.exportUrl) {
-        setExportUrl(data.exportUrl);
-        setShowExportSuccess(true);
-      } else {
-        setExportError("Export finished but no file URL was returned.");
+      if (!res.body) {
+        setExportError("Export failed — no response body.");
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as Record<string, unknown>;
+            if (typeof evt.pct === "number") setExportProgress(evt.pct);
+            if (evt.done) {
+              setExportProgress(100);
+              setExportUrl(evt.exportUrl as string);
+              setShowExportSuccess(true);
+            }
+            if (evt.error) setExportError(evt.error as string);
+          } catch {}
+        }
       }
     } catch (err) {
       setExportError(String(err));
+    } finally {
+      setExporting(false);
+      setExportProgress(null);
     }
-    setExporting(false);
   }
 
   // Same-origin /api/files route with ?download=<name> sets
@@ -274,6 +299,13 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  async function handleDeleteClip() {
+    if (!clip) return;
+    if (!window.confirm("Delete this clip? This cannot be undone.")) return;
+    await fetch(`/api/clips/${id}`, { method: "DELETE" });
+    router.push(`/projects/${clip.projectId}`);
   }
 
   // Let AI pick the best part of the clip, then apply it (auto-saved like
@@ -399,10 +431,23 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           <button
             onClick={() => setShowExportModal(true)}
             disabled={exporting || !videoSrc}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs rounded-lg font-medium transition-colors"
+            className="relative flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs rounded-lg font-medium transition-colors overflow-hidden"
           >
-            {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            {exporting ? "Exporting…" : "Export"}
+            {/* Progress fill behind the label */}
+            {exporting && exportProgress !== null && (
+              <span
+                className="absolute inset-0 bg-brand-500/60 origin-left transition-[width] duration-300"
+                style={{ width: `${exportProgress}%` }}
+              />
+            )}
+            <span className="relative flex items-center gap-1.5">
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {exporting
+                ? exportProgress !== null && exportProgress > 0
+                  ? `Exporting… ${exportProgress}%`
+                  : "Exporting…"
+                : "Export"}
+            </span>
           </button>
         </div>
       </header>
@@ -437,6 +482,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               onChange={setCaptionConfig}
               enabled={captionsEnabled}
               onEnabledChange={setCaptionsEnabled}
+              onViewTranscript={words.length > 0 ? () => setShowTranscript(true) : undefined}
             />
           )}
           {activeTab === "story" && (
@@ -623,6 +669,16 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         </div>
       )}
 
+      {/* Transcript modal */}
+      {showTranscript && (
+        <TranscriptModal
+          words={words}
+          clipStart={startTime}
+          onSeek={(t) => { setCurrentTime(t); setShowTranscript(false); }}
+          onClose={() => setShowTranscript(false)}
+        />
+      )}
+
       {/* Export modal */}
       {showExportModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -686,6 +742,12 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               className="w-full py-2 text-surface-500 hover:text-white text-xs transition-colors"
             >
               Close
+            </button>
+            <button
+              onClick={handleDeleteClip}
+              className="w-full py-2 text-red-500 hover:text-red-400 text-xs transition-colors"
+            >
+              Delete this clip
             </button>
           </div>
         </div>
