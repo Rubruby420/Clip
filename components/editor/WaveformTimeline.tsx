@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Scissors, Ban, Undo2, Redo2, X,
+  Scissors, Ban, Undo2, Redo2, X, Trash2,
   ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight, Image,
 } from "lucide-react";
 import { formatDuration, formatPreciseTime } from "@/lib/utils";
@@ -63,6 +63,8 @@ interface Props {
   selectedSpliceId?: string | null;
   onAddSplicePoint?: () => void;
   onRemoveBgNoise?: () => void;
+  // Delete the clip under the playhead.
+  onDeleteClip?: () => void;
   // Undo / redo wired directly into the toolbar.
   onUndo?: () => void;
   onRedo?: () => void;
@@ -100,7 +102,7 @@ export default function WaveformTimeline({
   pendingMuteStart = null,
   onMuteRangeChange, onMuteDelete, minCut = 0.3,
   spliceMode = false, spliceSegments = [], selectedSpliceId = null, onAddSplicePoint,
-  onRemoveBgNoise,
+  onRemoveBgNoise, onDeleteClip,
   onUndo, onRedo, canUndo = false, canRedo = false, undoLabel, redoLabel,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -395,9 +397,10 @@ export default function WaveformTimeline({
 
   // Floating playhead buttons flip to the left of the line when it's near
   // the right edge so they don't get clipped off-screen.
-  const flipButtons = playheadX > width - 70;
+  const flipButtons = playheadX > width - 100;
   const scissorsLeft = flipButtons ? playheadX - 30 : playheadX + 8;
   const muteBtnLeft = flipButtons ? playheadX - 58 : playheadX + 36;
+  const deleteBtnLeft = flipButtons ? playheadX - 86 : playheadX + 64;
 
   return (
     <div className="px-4 py-3 bg-surface-800 border-t border-surface-600 select-none">
@@ -780,6 +783,21 @@ export default function WaveformTimeline({
             style={{ left: muteBtnLeft }}
           >
             {playheadClipMuted ? <Undo2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+          </button>
+        )}
+
+        {/* Delete clip button — sits next to the mute button. */}
+        {onDeleteClip && onScreen(playheadX) && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDeleteClip(); }}
+            title="Delete this clip"
+            className="absolute top-1 w-6 h-6 -ml-0.5 flex items-center justify-center rounded-md bg-red-600 hover:bg-red-500 text-white shadow-lg ring-1 ring-black/40 transition-colors"
+            style={{ left: deleteBtnLeft }}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
       </div>

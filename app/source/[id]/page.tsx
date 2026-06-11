@@ -422,6 +422,23 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     if (!res.ok) throw new Error("PATCH failed");
   }
 
+  async function handleDeleteClipAtPlayhead() {
+    if (!clipAtPlayhead) return;
+    const clipId = clipAtPlayhead.id;
+    // Optimistic remove from local state.
+    setProject((prev) => prev
+      ? { ...prev, clips: prev.clips.filter((c) => c.id !== clipId) }
+      : prev);
+    try {
+      await fetch(`/api/clips/${clipId}`, { method: "DELETE" });
+    } catch {
+      // Re-fetch to restore state if the delete failed.
+      const res = await fetch(`/api/projects/${project?.id}`);
+      if (res.ok) setProject((await res.json()).project);
+      alert("Couldn't delete clip — check your connection.");
+    }
+  }
+
   async function handleToggleMute() {
     if (!clipAtPlayhead) return;
     const clipId = clipAtPlayhead.id;
@@ -1320,6 +1337,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           pendingMuteStart={tool === "scissors" ? pendingMuteStart : null}
           onToggleMute={tool === "scissors" && clipAtPlayhead ? handleToggleMute : undefined}
           playheadClipMuted={clipAtPlayhead?.muted ?? false}
+          onDeleteClip={tool === "scissors" && clipAtPlayhead ? handleDeleteClipAtPlayhead : undefined}
           onMuteRangeChange={tool === "scissors" ? handleMuteRangeChange : undefined}
           onMuteDelete={tool === "scissors" ? handleMuteDelete : undefined}
           minCut={MIN_CUT}
