@@ -80,9 +80,9 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   useUndoRedoShortcuts(history.undo, history.redo);
   const byStart = (a: SavedClip, b: SavedClip) => a.startTime - b.startTime;
 
-  // Splice tool: break the source into an ordered list of segments that get
-  // stitched into one exported clip (separate tool from cut/mute).
-  const [tool, setTool] = useState<"scissors" | "splice">("scissors");
+  // Splice: break the source into an ordered list of segments that get
+  // stitched into one exported clip. Scissors = add splice point.
+  // Cut-region features (mute, trash, drag) operate independently on saved clips.
   const [spliceSegments, setSpliceSegments] = useState<Segment[] | null>(null);
   const [selectedSpliceId, setSelectedSpliceId] = useState<string | null>(null);
   const [savedSpliceId, setSavedSpliceId] = useState<string | null>(null);
@@ -95,14 +95,14 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
   const [silenceSensitivity, setSilenceSensitivity] = useState(0.5);
   const silencePatchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Ordered ranges fed to the preview's sequence player. Memoized so its
-  // identity is stable across renders (otherwise CanvasPreview's reset effect
-  // would re-fire every render and pin playback at the first segment).
+  // Ordered ranges fed to the preview's sequence player. Only active when
+  // there are multiple segments — a single full-video segment is normal
+  // playback and leaves skipRanges (muted clips) working.
   const playSequence = useMemo(
-    () => (tool === "splice" && spliceSegments && spliceSegments.length > 0
+    () => (spliceSegments && spliceSegments.length > 1
       ? spliceSegments.map((s) => ({ start: s.start, end: s.end }))
       : undefined),
-    [tool, spliceSegments],
+    [spliceSegments],
   );
 
   // Clips in creation order (oldest first) for the grouped sidebar list, so
@@ -392,300 +392,6 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     setGeneratingWaveform(false);
   }
 
-  // The saved clip (if any) that contains the current playhead. Drives
-  // whether the razor + mute buttons show up on the waveform and what
-  // they target.
-  const clipAtPlayhead = project?.clips.find(
-    (c) => currentTime > c.startTime && currentTime < c.endTime,
-  );
-
-  // Ranges the source-editor preview should skip during playback —
-  // every clip the user has marked as muted. Re-derived on every
-  // render so toggle-mute is reflected immediately.
-  const mutedRanges = (project?.clips ?? [])
-    .filter((c) => c.muted)
-    .map((c) => ({ start: c.startTime, end: c.endTime }));
-
-  // Apply a mute value to one clip both locally and on the server. Shared by
-  // the toggle handler and its undo/redo command so all three go one path.
-  function setClipMutedLocal(clipId: string, muted: boolean) {
-    setProject((prev) => prev
-      ? { ...prev, clips: prev.clips.map((c) => (c.id === clipId ? { ...c, muted } : c)) }
-      : prev);
-  }
-  async function patchMuted(clipId: string, muted: boolean) {
-    const res = await fetch(`/api/clips/${clipId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ muted }),
-    });
-    if (!res.ok) throw new Error("PATCH failed");
-  }
-
-  async function handleDeleteClipAtPlayhead() {
-    if (!clipAtPlayhead) return;
-    const clipId = clipAtPlayhead.id;
-    // Optimistic remove from local state.
-    setProject((prev) => prev
-      ? { ...prev, clips: prev.clips.filter((c) => c.id !== clipId) }
-      : prev);
-    try {
-      await fetch(`/api/clips/${clipId}`, { method: "DELETE" });
-    } catch {
-      // Re-fetch to restore state if the delete failed.
-      const res = await fetch(`/api/projects/${project?.id}`);
-      if (res.ok) setProject((await res.json()).project);
-      alert("Couldn't delete clip — check your connection.");
-    }
-  }
-
-  async function handleToggleMute() {
-    if (!clipAtPlayhead) return;
-    const clipId = clipAtPlayhead.id;
-    const prevMuted = clipAtPlayhead.muted;
-    const next = !prevMuted;
-    // Optimistic update so the band re-renders instantly.
-    setClipMutedLocal(clipId, next);
-    try {
-      await patchMuted(clipId, next);
-      history.push({
-        label: next ? "mute" : "unmute",
-        undo: async () => { await patchMuted(clipId, prevMuted); setClipMutedLocal(clipId, prevMuted); },
-        redo: async () => { await patchMuted(clipId, next); setClipMutedLocal(clipId, next); },
-      });
-    } catch {
-      // Roll back the optimistic update if the server didn't accept it.
-      setClipMutedLocal(clipId, prevMuted);
-      alert("Couldn't toggle mute — check your connection.");
-    }
-  }
-
-  // Move/resize a clip's range both locally and on the server. Used by the
-  // waveform's direct manipulation of muted (cut) regions.
-  function setClipRangeLocal(clipId: string, s: number, e: number) {
-    setProject((prev) => prev
-      ? { ...prev, clips: prev.clips.map((c) => (c.id === clipId ? { ...c, startTime: s, endTime: e } : c)).sort(byStart) }
-      : prev);
-  }
-  async function patchRange(clipId: string, s: number, e: number) {
-    const res = await fetch(`/api/clips/${clipId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ startTime: s, endTime: e }),
-    });
-    if (!res.ok) throw new Error("PATCH failed");
-  }
-
-  // Drag-to-move / resize a cut region. Commits once (on pointer-up) from
-  // the waveform. Stable clip id, so the undo command is a plain inverse
-  // PATCH — no recreate / id-remap needed.
-  async function handleMuteRangeChange(clipId: string, start: number, end: number) {
-    if (end - start < MIN_CUT) return; // belt-and-suspenders; timeline clamps too
-    const before = project?.clips.find((c) => c.id === clipId);
-    if (!before) return;
-    const prevStart = before.startTime;
-    const prevEnd = before.endTime;
-    setClipRangeLocal(clipId, start, end);
-    try {
-      await patchRange(clipId, start, end);
-      history.push({
-        label: "move cut",
-        undo: async () => { await patchRange(clipId, prevStart, prevEnd); setClipRangeLocal(clipId, prevStart, prevEnd); },
-        redo: async () => { await patchRange(clipId, start, end); setClipRangeLocal(clipId, start, end); },
-      });
-    } catch {
-      setClipRangeLocal(clipId, prevStart, prevEnd);
-      alert("Couldn't move the cut — check your connection.");
-    }
-  }
-
-  // Delete a cut region. Undo recreates it (server hands back a NEW id, which
-  // we remap into the closure so a later redo deletes the right clip — same
-  // pattern as the split/create commands).
-  async function handleMuteDelete(clipId: string) {
-    const removed = project?.clips.find((c) => c.id === clipId);
-    if (!removed) return;
-    setProject((prev) => prev ? { ...prev, clips: prev.clips.filter((c) => c.id !== clipId) } : prev);
-    try {
-      const res = await fetch(`/api/clips/${clipId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("DELETE failed");
-      const live = { id: clipId };
-      history.push({
-        label: "delete cut",
-        undo: async () => {
-          const r = await fetch(`/api/projects/${id}/clips`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startTime: removed.startTime, endTime: removed.endTime, muted: true, title: removed.title }),
-          });
-          const d = await r.json();
-          if (!r.ok || !d.clip) throw new Error("recreate failed");
-          live.id = d.clip.id;
-          setProject((prev) => prev ? { ...prev, clips: [...prev.clips, d.clip].sort(byStart) } : prev);
-        },
-        redo: async () => {
-          await fetch(`/api/clips/${live.id}`, { method: "DELETE" });
-          const gone = live.id;
-          setProject((prev) => prev ? { ...prev, clips: prev.clips.filter((c) => c.id !== gone) } : prev);
-        },
-      });
-    } catch {
-      // Restore on failure.
-      setProject((prev) => prev ? { ...prev, clips: [...prev.clips, removed].sort(byStart) } : prev);
-      alert("Couldn't delete the cut — check your connection.");
-    }
-  }
-
-  async function handleSplit() {
-    if (!clipAtPlayhead) return;
-    const original = clipAtPlayhead;
-    const splitAt = currentTime;
-    // Refuse a split that would leave either half too short to be usable.
-    if (splitAt - original.startTime < MIN_CUT || original.endTime - splitAt < MIN_CUT) {
-      alert(`Move the playhead further from the clip edge — each half needs at least ${MIN_CUT}s.`);
-      return;
-    }
-    try {
-      const res = await fetch(`/api/clips/${original.id}/split`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ at: splitAt }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.a || !data.b) {
-        alert(data.error || "Couldn't split the clip.");
-        return;
-      }
-      setProject((prev) => prev
-        ? {
-            ...prev,
-            clips: [
-              ...prev.clips.filter((c) => c.id !== original.id),
-              data.a,
-              data.b,
-            ].sort(byStart),
-          }
-        : prev);
-
-      // Inverse command. `cur*` track the live ids: undo re-merges (deletes the
-      // two halves, recreates the original — which gets a NEW id), redo
-      // re-splits whatever the original currently is.
-      let curA: SavedClip = data.a;
-      let curB: SavedClip = data.b;
-      let curOriginal: SavedClip = original;
-      history.push({
-        label: "split clip",
-        undo: async () => {
-          await Promise.all([
-            fetch(`/api/clips/${curA.id}`, { method: "DELETE" }),
-            fetch(`/api/clips/${curB.id}`, { method: "DELETE" }),
-          ]);
-          const res2 = await fetch(`/api/projects/${id}/clips`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              startTime: original.startTime,
-              endTime: original.endTime,
-              muted: original.muted,
-              title: original.title,
-            }),
-          });
-          const d2 = await res2.json();
-          if (!res2.ok || !d2.clip) throw new Error("re-merge failed");
-          curOriginal = d2.clip;
-          const removedA = curA.id, removedB = curB.id;
-          setProject((prev) => prev
-            ? { ...prev, clips: [...prev.clips.filter((c) => c.id !== removedA && c.id !== removedB), d2.clip].sort(byStart) }
-            : prev);
-        },
-        redo: async () => {
-          const res2 = await fetch(`/api/clips/${curOriginal.id}/split`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ at: splitAt }),
-          });
-          const d2 = await res2.json();
-          if (!res2.ok || !d2.a || !d2.b) throw new Error("re-split failed");
-          const mergedId = curOriginal.id;
-          curA = d2.a; curB = d2.b;
-          setProject((prev) => prev
-            ? { ...prev, clips: [...prev.clips.filter((c) => c.id !== mergedId), d2.a, d2.b].sort(byStart) }
-            : prev);
-        },
-      });
-      // Nudge the playhead 50ms forward so it ends up inside the new
-      // B half (strictly inside, not on the boundary) — keeps the
-      // scissors button visible for an immediate second split without
-      // making the user scrub. Clamped so we never overshoot the
-      // source duration.
-      setCurrentTime((t) => Math.min(t + 0.05, Math.max(0, duration - 0.05)));
-    } catch {
-      alert("Couldn't split the clip — check your connection.");
-    }
-  }
-
-  // Pending mute-region selection: first scissors click in grey
-  // captures the playhead time here; the next scissors click (anywhere)
-  // completes the selection and mutes [min, max]. null = no selection
-  // in progress.
-  const [pendingMuteStart, setPendingMuteStart] = useState<number | null>(null);
-
-  // Escape cancels an in-progress mute selection without affecting
-  // anything else. Skipping it if focus is in an input so the user can
-  // type Esc inside text fields without losing their work.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      const tag = (e.target as HTMLElement | null)?.tagName ?? "";
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (pendingMuteStart !== null) {
-        e.preventDefault();
-        setPendingMuteStart(null);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [pendingMuteStart]);
-
-  // Finalise a mute selection from the captured first-click time to the
-  // current playhead. The range is taken min→max so the user can mark
-  // either end first. Submitted via the standard clip-create endpoint
-  // with muted: true.
-  async function finishMuteSelection(from: number, to: number) {
-    const startAt = Math.min(from, to);
-    const endAt = Math.max(from, to);
-    if (endAt - startAt < MIN_CUT) {
-      // Too narrow to be a usable cut — discard silently (no leftover line).
-      setPendingMuteStart(null);
-      return;
-    }
-    try {
-      const res = await fetch(`/api/projects/${id}/clips`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startTime: startAt,
-          endTime: endAt,
-          muted: true,
-          title: "Muted",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.clip) {
-        alert(data.error || "Couldn't mute the segment.");
-        return;
-      }
-      setProject((prev) => prev
-        ? { ...prev, clips: [...prev.clips, data.clip].sort(byStart) }
-        : prev);
-      pushCreateCommand("mute selection", data.clip, { startTime: startAt, endTime: endAt, muted: true, title: "Muted" });
-    } catch {
-      alert("Couldn't mute the segment — check your connection.");
-    } finally {
-      setPendingMuteStart(null);
-    }
-  }
-
   // Record a "clip was created" command. Undo deletes the clip and drops it
   // from local state; redo re-POSTs the same body (the server hands back a new
   // id, which we remap into the closure so a later undo deletes the right one).
@@ -717,23 +423,133 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     });
   }
 
-  // Single scissors handler:
-  //   - Pending selection in progress? Close it at the current playhead.
-  //   - Playhead in a green clip and no pending? Split that clip.
-  //   - Playhead in grey and no pending? Start a mute selection.
-  function handleScissors() {
-    if (pendingMuteStart !== null) {
-      void finishMuteSelection(pendingMuteStart, currentTime);
-      return;
-    }
-    if (clipAtPlayhead) {
-      void handleSplit();
-      return;
-    }
-    setPendingMuteStart(currentTime);
+  // ---- Cut-region features (mute, trash, drag-resize) ------------------
+  // These operate on saved clips in the DB — distinct from splice segments.
+
+  const clipAtPlayhead = project?.clips.find(
+    (c) => currentTime > c.startTime && currentTime < c.endTime,
+  );
+
+  const mutedRanges = (project?.clips ?? [])
+    .filter((c) => c.muted)
+    .map((c) => ({ start: c.startTime, end: c.endTime }));
+
+  function setClipMutedLocal(clipId: string, muted: boolean) {
+    setProject((prev) => prev
+      ? { ...prev, clips: prev.clips.map((c) => (c.id === clipId ? { ...c, muted } : c)) }
+      : prev);
+  }
+  async function patchMuted(clipId: string, muted: boolean) {
+    const res = await fetch(`/api/clips/${clipId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ muted }),
+    });
+    if (!res.ok) throw new Error("PATCH failed");
   }
 
-  // ---- Splice tool ------------------------------------------------------
+  async function handleToggleMute() {
+    if (!clipAtPlayhead) return;
+    const clipId = clipAtPlayhead.id;
+    const prevMuted = clipAtPlayhead.muted;
+    const next = !prevMuted;
+    setClipMutedLocal(clipId, next);
+    try {
+      await patchMuted(clipId, next);
+      history.push({
+        label: next ? "mute" : "unmute",
+        undo: async () => { await patchMuted(clipId, prevMuted); setClipMutedLocal(clipId, prevMuted); },
+        redo: async () => { await patchMuted(clipId, next); setClipMutedLocal(clipId, next); },
+      });
+    } catch {
+      setClipMutedLocal(clipId, prevMuted);
+      alert("Couldn't toggle mute — check your connection.");
+    }
+  }
+
+  async function handleDeleteClipAtPlayhead() {
+    if (!clipAtPlayhead) return;
+    const clipId = clipAtPlayhead.id;
+    setProject((prev) => prev
+      ? { ...prev, clips: prev.clips.filter((c) => c.id !== clipId) }
+      : prev);
+    try {
+      await fetch(`/api/clips/${clipId}`, { method: "DELETE" });
+    } catch {
+      const res = await fetch(`/api/projects/${project?.id}`);
+      if (res.ok) setProject((await res.json()).project);
+      alert("Couldn't delete clip — check your connection.");
+    }
+  }
+
+  function setClipRangeLocal(clipId: string, s: number, e: number) {
+    setProject((prev) => prev
+      ? { ...prev, clips: prev.clips.map((c) => (c.id === clipId ? { ...c, startTime: s, endTime: e } : c)).sort(byStart) }
+      : prev);
+  }
+  async function patchRange(clipId: string, s: number, e: number) {
+    const res = await fetch(`/api/clips/${clipId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startTime: s, endTime: e }),
+    });
+    if (!res.ok) throw new Error("PATCH failed");
+  }
+
+  async function handleMuteRangeChange(clipId: string, start: number, end: number) {
+    if (end - start < MIN_CUT) return;
+    const before = project?.clips.find((c) => c.id === clipId);
+    if (!before) return;
+    const prevStart = before.startTime;
+    const prevEnd = before.endTime;
+    setClipRangeLocal(clipId, start, end);
+    try {
+      await patchRange(clipId, start, end);
+      history.push({
+        label: "move cut",
+        undo: async () => { await patchRange(clipId, prevStart, prevEnd); setClipRangeLocal(clipId, prevStart, prevEnd); },
+        redo: async () => { await patchRange(clipId, start, end); setClipRangeLocal(clipId, start, end); },
+      });
+    } catch {
+      setClipRangeLocal(clipId, prevStart, prevEnd);
+      alert("Couldn't move the cut — check your connection.");
+    }
+  }
+
+  async function handleMuteDelete(clipId: string) {
+    const removed = project?.clips.find((c) => c.id === clipId);
+    if (!removed) return;
+    setProject((prev) => prev ? { ...prev, clips: prev.clips.filter((c) => c.id !== clipId) } : prev);
+    try {
+      const res = await fetch(`/api/clips/${clipId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("DELETE failed");
+      const live = { id: clipId };
+      history.push({
+        label: "delete cut",
+        undo: async () => {
+          const r = await fetch(`/api/projects/${id}/clips`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ startTime: removed.startTime, endTime: removed.endTime, muted: true, title: removed.title }),
+          });
+          const d = await r.json();
+          if (!r.ok || !d.clip) throw new Error("recreate failed");
+          live.id = d.clip.id;
+          setProject((prev) => prev ? { ...prev, clips: [...prev.clips, d.clip].sort(byStart) } : prev);
+        },
+        redo: async () => {
+          await fetch(`/api/clips/${live.id}`, { method: "DELETE" });
+          const gone = live.id;
+          setProject((prev) => prev ? { ...prev, clips: prev.clips.filter((c) => c.id !== gone) } : prev);
+        },
+      });
+    } catch {
+      setProject((prev) => prev ? { ...prev, clips: [...prev.clips, removed].sort(byStart) } : prev);
+      alert("Couldn't delete the cut — check your connection.");
+    }
+  }
+
+  // ---- Splice (scissors = add splice point) ----------------------------
 
   // Persist a segment edit to a saved spliced clip (no-op until it's saved).
   async function patchSegments(clipId: string, segs: Segment[]) {
@@ -763,8 +579,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     });
   }
 
-  // Seed a splice from the current in/out selection (defaults to whole source).
-  // In splice mode currentTime is SEQUENCE-time, so reset it to 0.
+  // Reset splice to the current in/out selection (or full video). currentTime
+  // is SEQUENCE-time, so reset it to 0 so the playhead is at the sequence start.
   function startSplice() {
     const start = outTime > inTime ? inTime : 0;
     const end = outTime > inTime ? outTime : duration;
@@ -772,6 +588,15 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     setSelectedSpliceId(null);
     setCurrentTime(0);
   }
+
+  // Auto-seed a single full-video splice segment once duration is known.
+  // This means the editor always opens in splice mode — scissors = add splice point.
+  useEffect(() => {
+    if (duration > 0 && spliceSegments === null) {
+      setSpliceSegments([{ id: crypto.randomUUID(), start: 0, end: duration }]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duration]);
 
   // Divide the segment under the playhead into two. currentTime is sequence-
   // time, so map it to the underlying source time + active segment first.
@@ -802,6 +627,19 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     if (!spliceSegments) return;
     if (spliceSegments.length <= 1) { alert("A splice needs at least one segment — can't delete the last part."); return; }
     commitSegments(spliceSegments.filter((s) => s.id !== segId), "delete part");
+  }
+
+  // Trash button on the playhead: delete the splice segment the playhead
+  // sits in (sequence-time), or the clip band if only one segment.
+  function handleDeleteAtPlayhead() {
+    if (spliceSegments && spliceSegments.length > 1) {
+      const total = seqTotal(spliceSegments);
+      const t = Math.min(Math.max(currentTime, 0.001), total - 0.001);
+      const { segIndex } = seqToSource(spliceSegments, t);
+      deleteSegment(spliceSegments[segIndex].id);
+    } else if (clipAtPlayhead) {
+      void handleDeleteClipAtPlayhead();
+    }
   }
 
   // Save (or update) the spliced sequence as a single clip.
@@ -850,7 +688,6 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       alert("No clear speech detected — lower the sensitivity and try again.");
       return;
     }
-    if (tool !== "splice") setTool("splice");
     const prev = spliceSegments;
     const wasApplied = silenceApplied;
     setSpliceSegments(next);
@@ -894,7 +731,6 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
       }
     }
     const next: Segment[] = merged.map((s) => ({ id: crypto.randomUUID(), start: s.start, end: s.end }));
-    if (tool !== "splice") setTool("splice");
     const prev = spliceSegments;
     const wasApplied = silenceApplied;
     setSpliceSegments(next);
@@ -1145,45 +981,24 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
               {generatingProxy ? "Generating preview…" : "Smoother preview"}
             </button>
           )}
-          {/* Tool toggle: Cut/mute vs Splice (separate tools). */}
-          <div className="flex items-center rounded-lg border border-surface-600 overflow-hidden text-xs">
-            <button
-              onClick={() => { setTool("scissors"); setCurrentTime(0); }}
-              className={`px-3 py-1.5 font-medium transition-colors ${tool === "scissors" ? "bg-brand-600 text-white" : "text-surface-300 hover:bg-surface-700"}`}
-              title="Cut / mute tool"
-            >
-              Cut
-            </button>
-            <button
-              onClick={() => { setTool("splice"); if (!spliceSegments) startSplice(); else setCurrentTime(0); }}
-              className={`px-3 py-1.5 font-medium transition-colors ${tool === "splice" ? "bg-indigo-600 text-white" : "text-surface-300 hover:bg-surface-700"}`}
-              title="Splice tool — break the track into reorderable segments"
-            >
-              Splice
-            </button>
-          </div>
-
-          {tool === "scissors" ? (
-            <button
-              onClick={handleSaveClip}
-              disabled={saving || segmentDuration < 1}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs rounded-lg font-medium transition-colors"
-              title="Save the current in/out as a new clip"
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
-              Save as new clip ({formatDuration(segmentDuration)})
-            </button>
-          ) : (
-            <button
-              onClick={saveSplice}
-              disabled={savingSplice || !spliceSegments || spliceSegments.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs rounded-lg font-medium transition-colors"
-              title="Save the arranged segments as one stitched clip"
-            >
-              {savingSplice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
-              {savedSpliceId ? "Update spliced clip" : "Save spliced clip"}
-            </button>
-          )}
+          <button
+            onClick={handleSaveClip}
+            disabled={saving || segmentDuration < 1}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs rounded-lg font-medium transition-colors"
+            title="Save the current in/out as a new clip"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
+            Save as new clip ({formatDuration(segmentDuration)})
+          </button>
+          <button
+            onClick={saveSplice}
+            disabled={savingSplice || !spliceSegments || spliceSegments.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs rounded-lg font-medium transition-colors"
+            title="Save the arranged segments as one stitched clip"
+          >
+            {savingSplice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
+            {savedSpliceId ? "Update spliced clip" : "Save spliced clip"}
+          </button>
         </div>
       </header>
 
@@ -1249,8 +1064,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
             </p>
             {project.clips.length === 0 ? (
               <p className="text-[11px] text-surface-600 leading-relaxed">
-                Drag the waveform handles below to set in/out points,
-                then click <span className="text-brand-300">Save as new clip</span>.
+                Use the scissors to cut the waveform into segments, then
+                drag the handles and click <span className="text-brand-300">Save as new clip</span>.
               </p>
             ) : (
               <ClipGroups projectId={project.id} clips={orderedClips} onRenameClip={renameClip} />
@@ -1285,8 +1100,8 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
                   captionsEnabled={false}
                   layout={DEFAULT_LAYOUT}
                   startTime={0}
-                  endTime={tool === "splice" && spliceSegments ? seqTotal(spliceSegments) : (duration || 0)}
-                  skipRanges={tool === "splice" ? undefined : mutedRanges}
+                  endTime={spliceSegments && spliceSegments.length > 1 ? seqTotal(spliceSegments) : (duration || 0)}
+                  skipRanges={spliceSegments && spliceSegments.length > 1 ? undefined : mutedRanges}
                   playSequence={playSequence}
                 />
                 {duration === 0 && (
@@ -1308,7 +1123,7 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
             )}
           </div>
           <p className="mt-3 text-xs text-surface-600 text-center">
-            Click the video to play · Drag the handles below to scope a clip
+            Click the video to play · Scissors = cut · Drag handles to scope a clip
           </p>
         </main>
       </div>
@@ -1323,29 +1138,20 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           onStartChange={setInTime}
           onEndChange={setOutTime}
           onSeek={(t) => setCurrentTime(t)}
-          savedClips={tool === "splice" ? [] : (project?.clips ?? [])}
-          // Cut/mute tools — only in scissors mode (withheld in splice mode so
-          // those interactions are cleanly inert).
-          onSplit={tool === "scissors" ? handleScissors : undefined}
-          splitTooltip={
-            pendingMuteStart !== null
-              ? "Click to end the mute here (Esc to cancel)"
-              : clipAtPlayhead
-                ? "Split clip at playhead"
-                : "Click to start a precise mute (then click again at the end)"
-          }
-          pendingMuteStart={tool === "scissors" ? pendingMuteStart : null}
-          onToggleMute={tool === "scissors" && clipAtPlayhead ? handleToggleMute : undefined}
+          savedClips={project?.clips ?? []}
+          onSplit={undefined}
+          splitTooltip="Add cut point at playhead"
+          pendingMuteStart={null}
+          onToggleMute={clipAtPlayhead ? handleToggleMute : undefined}
           playheadClipMuted={clipAtPlayhead?.muted ?? false}
-          onDeleteClip={tool === "scissors" && clipAtPlayhead ? handleDeleteClipAtPlayhead : undefined}
-          onMuteRangeChange={tool === "scissors" ? handleMuteRangeChange : undefined}
-          onMuteDelete={tool === "scissors" ? handleMuteDelete : undefined}
+          onDeleteClip={(spliceSegments && spliceSegments.length > 1) || clipAtPlayhead ? handleDeleteAtPlayhead : undefined}
+          onMuteRangeChange={handleMuteRangeChange}
+          onMuteDelete={handleMuteDelete}
           minCut={MIN_CUT}
-          // Splice tool
-          spliceMode={tool === "splice"}
-          spliceSegments={tool === "splice" ? (spliceSegments ?? []) : []}
+          spliceMode={true}
+          spliceSegments={spliceSegments ?? []}
           selectedSpliceId={selectedSpliceId}
-          onAddSplicePoint={tool === "splice" ? addSplicePoint : undefined}
+          onAddSplicePoint={addSplicePoint}
           onRemoveBgNoise={handleRemoveBgNoise}
           onUndo={history.undo}
           onRedo={history.redo}
@@ -1354,41 +1160,26 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           undoLabel={history.undoLabel}
           redoLabel={history.redoLabel}
         />
-        {tool === "splice" && (
-          <>
-            <SilenceControls
-              disabled={peaks.length === 0 || duration <= 0}
-              applied={silenceApplied}
-              sensitivity={silenceSensitivity}
-              onSensitivityChange={handleSensitivityChange}
-              onRemoveSilences={handleRemoveSilences}
-              segmentCount={spliceSegments?.length ?? 0}
-              keptDuration={silenceSummary.keptDuration}
-              removedDuration={silenceSummary.removedDuration}
-              gapCount={silenceSummary.gapCount}
-              totalDuration={duration}
-            />
-            {spliceSegments
-              ? (
-                <SpliceStrip
-                  segments={spliceSegments}
-                  selectedId={selectedSpliceId}
-                  onReorder={reorderSegment}
-                  onDelete={deleteSegment}
-                  onSelect={(id) => setSelectedSpliceId((cur) => (cur === id ? null : id))}
-                />
-              )
-              : (
-                <div className="px-4 py-3 border-t border-surface-700">
-                  <button
-                    onClick={startSplice}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
-                  >
-                    Start splice from current selection
-                  </button>
-                </div>
-              )}
-          </>
+        <SilenceControls
+          disabled={peaks.length === 0 || duration <= 0}
+          applied={silenceApplied}
+          sensitivity={silenceSensitivity}
+          onSensitivityChange={handleSensitivityChange}
+          onRemoveSilences={handleRemoveSilences}
+          segmentCount={spliceSegments?.length ?? 0}
+          keptDuration={silenceSummary.keptDuration}
+          removedDuration={silenceSummary.removedDuration}
+          gapCount={silenceSummary.gapCount}
+          totalDuration={duration}
+        />
+        {spliceSegments && (
+          <SpliceStrip
+            segments={spliceSegments}
+            selectedId={selectedSpliceId}
+            onReorder={reorderSegment}
+            onDelete={deleteSegment}
+            onSelect={(id) => setSelectedSpliceId((cur) => (cur === id ? null : id))}
+          />
         )}
       </div>
 
