@@ -11,7 +11,6 @@ import WaveformTimeline from "@/components/editor/WaveformTimeline";
 import ClipGroups from "@/components/editor/ClipGroups";
 import SpliceStrip, { type Segment } from "@/components/editor/SpliceStrip";
 import SilenceControls from "@/components/editor/SilenceControls";
-import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
 import { DEFAULT_LAYOUT } from "@/components/editor/LayoutPanel";
 import { DEFAULT_CAPTION_CONFIG } from "@/lib/captions";
 import { formatDuration } from "@/lib/utils";
@@ -1105,14 +1104,6 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
             {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AudioLines className="w-3.5 h-3.5" />}
             {detecting ? "Detecting…" : "Detect Speakers"}
           </button>
-          <UndoRedoButtons
-            undo={history.undo}
-            redo={history.redo}
-            canUndo={history.canUndo}
-            canRedo={history.canRedo}
-            undoLabel={history.undoLabel}
-            redoLabel={history.redoLabel}
-          />
           {/* Manual generate buttons appear only when the background poll
               has given up or the user is mid-generate — keeps the header
               calm during the normal happy path where prep finishes on
@@ -1338,6 +1329,12 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
           selectedSpliceId={selectedSpliceId}
           onAddSplicePoint={tool === "splice" ? addSplicePoint : undefined}
           onRemoveBgNoise={handleRemoveBgNoise}
+          onUndo={history.undo}
+          onRedo={history.redo}
+          canUndo={history.canUndo}
+          canRedo={history.canRedo}
+          undoLabel={history.undoLabel}
+          redoLabel={history.redoLabel}
         />
         {tool === "splice" && (
           <>

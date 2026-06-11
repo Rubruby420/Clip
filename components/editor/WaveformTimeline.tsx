@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Scissors, Ban, Undo2, X,
+  Scissors, Ban, Undo2, Redo2, X,
   ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight, Image,
 } from "lucide-react";
 import { formatDuration, formatPreciseTime } from "@/lib/utils";
@@ -63,6 +63,13 @@ interface Props {
   selectedSpliceId?: string | null;
   onAddSplicePoint?: () => void;
   onRemoveBgNoise?: () => void;
+  // Undo / redo wired directly into the toolbar.
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  undoLabel?: string;
+  redoLabel?: string;
 }
 
 // Drag targets. The trim handles + playhead are the originals; the three
@@ -94,6 +101,7 @@ export default function WaveformTimeline({
   onMuteRangeChange, onMuteDelete, minCut = 0.3,
   spliceMode = false, spliceSegments = [], selectedSpliceId = null, onAddSplicePoint,
   onRemoveBgNoise,
+  onUndo, onRedo, canUndo = false, canRedo = false, undoLabel, redoLabel,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
@@ -424,6 +432,28 @@ export default function WaveformTimeline({
           className="p-1.5 rounded-xl bg-violet-400 border-2 border-violet-600 shadow-[3px_3px_0px_#5b21b6] hover:shadow-[1px_1px_0px_#5b21b6] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100 disabled:opacity-40 disabled:pointer-events-none">
           <Image className="w-4 h-4 text-white" strokeWidth={2.5} />
         </button>
+
+        {/* Undo / Redo */}
+        {(onUndo || onRedo) && (
+          <>
+            <button type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              title={undoLabel ? `Undo: ${undoLabel}` : "Undo"}
+              className="p-1.5 rounded-xl bg-zinc-400 border-2 border-zinc-600 shadow-[3px_3px_0px_#27272a] hover:shadow-[1px_1px_0px_#27272a] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-[3px_3px_0px_#27272a] disabled:translate-x-0 disabled:translate-y-0 transition-all duration-100"
+            >
+              <Undo2 className="w-4 h-4 text-white" strokeWidth={2.5} />
+            </button>
+            <button type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              title={redoLabel ? `Redo: ${redoLabel}` : "Redo"}
+              className="p-1.5 rounded-xl bg-zinc-400 border-2 border-zinc-600 shadow-[3px_3px_0px_#27272a] hover:shadow-[1px_1px_0px_#27272a] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-[3px_3px_0px_#27272a] disabled:translate-x-0 disabled:translate-y-0 transition-all duration-100"
+            >
+              <Redo2 className="w-4 h-4 text-white" strokeWidth={2.5} />
+            </button>
+          </>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <button type="button" title="Nudge back 0.1s"
