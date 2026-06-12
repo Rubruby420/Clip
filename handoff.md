@@ -1,5 +1,29 @@
 # Clip — Session Handoff
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-12*
+
+---
+
+## Session 2026-06-12 — GitHub Actions Node.js upgrade + v0.2.2
+
+### What shipped
+
+**Fixed GitHub Actions Node.js 20 deprecation warning:**
+
+CI annotation after v0.2.1: *"Node.js 20 actions are deprecated… Actions will be forced to run with Node.js 24 by default starting June 16th, 2026."*
+
+- First tried `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` env var (v0.2.1) — didn't suppress the warning when using pinned `@v4` action versions.
+- Updated `actions/checkout@v4` → `@v6` and `actions/setup-node@v4` → `@v6` (both at v6 as of June 2026) and removed the env var workaround (v0.2.2) — CI passed clean with zero annotations except the routine `windows-latest` redirect notice.
+
+**Tags published:** `v0.2.0` (previous session), `v0.2.1`, `v0.2.2` — all on GitHub Releases.
+
+### Current state
+- CI is clean; no build warnings, no actions deprecation warnings.
+- `windows-latest` will silently redirect to `windows-2025-vs2026` by June 15 — no action needed.
+- Version in `package.json`: `0.2.0` (patch releases 0.2.1/0.2.2 were workflow-only fixes; no need to bump).
+
+### Next steps
+- Full smoke test on a **longer talking video** (5–30 min) to exercise AssemblyAI auto-chapters, multi-clip detection, and the 720p proxy pipeline.
+- Optional: add a gear icon to the dashboard header linking to `/settings` for easy key editing without the first-run flow.
 
 ---
 
