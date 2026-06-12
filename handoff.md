@@ -1,5 +1,41 @@
 # Clip — Session Handoff
-*Last updated: 2026-06-10*
+*Last updated: 2026-06-11*
+
+---
+
+## Session 2026-06-11 — Setup fixes + installer verification
+
+### What shipped (commits `1ad3c4d`, `c37e910`)
+
+**Three recurring setup issues fixed:**
+
+1. **Build warnings** — removed unused `projectLogoPath` imports from export routes, deleted dead `startSplice` function, renamed lucide `Image` → `ImageIcon` (stopped false-positive alt-prop ESLint hit), added eslint-disable on logo overlay `<img>`. `npm run build` now zero warnings.
+2. **Settings save in dev mode** — `POST /api/settings` was returning 400 "packaged app only". Now writes keys to `.env.local` using safe line-by-line update. Restart dev server after saving.
+3. **OpenAI lazy init** — replaced module-level `new OpenAI(...)` with `getOpenAI()` factory in all 6 lib files (whisper, coach, highlights, flagpal, remix, story). Build no longer throws when `OPENAI_API_KEY` is absent at build time.
+
+**Installer testing found and fixed three bugs:**
+1. **`.env.local` leaking into installer** — Next.js standalone bundles env files. `prepare-electron-build.js` now strips them before packaging so the installer never ships dev keys.
+2. **Dashboard/upload statically pre-rendered** — `process.env.OPENAI_API_KEY` check in `app/page.tsx` and `app/upload/page.tsx` was evaluated at build time (key set → no redirect → static). Added `export const dynamic = "force-dynamic"` to both.
+3. **`template.db` missing `clipStatus`** — regenerated from current schema.
+
+**Installer verified end-to-end:**
+- Fresh install → `/settings?firstRun=true` redirect ✓
+- Save keys → writes `%AppData%\Clip\clip-config.json` ✓
+- Restart → dashboard loads with all keys ✓
+
+**Smoke test on talking video — full pipeline verified:**
+- Upload (48MB screen recording, 43s) → API ✓
+- AI processing: Whisper transcription (10,044 chars / 139 words), LLM fallback highlight detection (AssemblyAI auto-chapters too short at 43s) ✓
+- 1 clip generated with real title from transcript, score 0.92 ✓
+- Export with live SSE progress bar → 6.05 MB 9:16 1080×1920 MP4 ✓
+- Download via `/api/files/` ✓
+- Delete project → storage folder + DB record gone ✓
+
+### Next steps
+- **Full smoke test on longer content** (5–30 min talking video) to exercise AssemblyAI chapters, multi-clip detection, and the 720p proxy pipeline.
+- **Delete the old Cloudflare R2 bucket** — local storage migration is confirmed working.
+- **Publish a real release**: bump version in `package.json`, then `git tag v0.2.0 && git push --tags` → GitHub Actions builds and publishes installer.
+- **Optional**: add a gear icon to the dashboard header linking to `/settings` for easy key editing without the first-run flow.
 
 ---
 
