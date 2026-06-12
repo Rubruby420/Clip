@@ -556,6 +556,7 @@ const CanvasPreview = forwardRef<HTMLDivElement, Props>(({
               pos === "bottom-left"  ? { bottom: "14%", left: "5%" } :
                                        { bottom: "14%", right: "5%" }),
         };
+        // eslint-disable-next-line @next/next/no-img-element
         return <img src={fileUrl(layout.logoUrl)} alt="" style={style} />;
       })()}
 

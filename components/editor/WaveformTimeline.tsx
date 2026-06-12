@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Scissors, Ban, Undo2, Redo2, X, Trash2,
-  ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight, Image,
+  ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight, Image as ImageIcon,
 } from "lucide-react";
 import { formatDuration, formatPreciseTime } from "@/lib/utils";
 import { seqTotal, segOffsets, seqToSource } from "@/lib/splice";
@@ -433,7 +433,7 @@ export default function WaveformTimeline({
           onClick={onRemoveBgNoise}
           disabled={!onRemoveBgNoise}
           className="p-1.5 rounded-xl bg-violet-400 border-2 border-violet-600 shadow-[3px_3px_0px_#5b21b6] hover:shadow-[1px_1px_0px_#5b21b6] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-none active:translate-x-[3px] active:translate-y-[3px] transition-all duration-100 disabled:opacity-40 disabled:pointer-events-none">
-          <Image className="w-4 h-4 text-white" strokeWidth={2.5} />
+          <ImageIcon className="w-4 h-4 text-white" strokeWidth={2.5} />
         </button>
 
         {/* Undo / Redo */}

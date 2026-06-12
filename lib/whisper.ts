@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import fs from "fs";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
 
 export interface WordTimestamp {
   word: string;
@@ -18,7 +18,7 @@ export interface TranscriptionResult {
 export async function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
   const file = fs.createReadStream(audioPath);
 
-  const response = await openai.audio.transcriptions.create({
+  const response = await getOpenAI().audio.transcriptions.create({
     file,
     model: "whisper-1",
     response_format: "verbose_json",

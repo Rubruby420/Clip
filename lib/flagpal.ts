@@ -3,7 +3,7 @@
 
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
 const MODEL = "gpt-4o-mini";
 
 export type FlagSeverity = "high" | "medium" | "low";
@@ -98,7 +98,7 @@ export async function scanForViolations(input: {
 
   if (!input.transcript.trim()) return empty;
 
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -207,7 +207,7 @@ export async function rewriteViolation(input: {
   category: string;
   platform: FlagPlatform;
 }): Promise<string[]> {
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [

@@ -7,7 +7,7 @@ import OpenAI from "openai";
 import type { CaptionStyle } from "./captions";
 import type { ViralVideo } from "./youtube";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
 
 const MODEL = "gpt-4o-mini";
 const CAPTION_STYLES: CaptionStyle[] = ["karaoke", "bold-pop", "minimal", "emoji-auto"];
@@ -39,7 +39,7 @@ export async function generateSearchQueries(
   title: string,
   transcript: string
 ): Promise<string[]> {
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -82,7 +82,7 @@ export async function generateCloneRecipe(input: {
       ? `You have ${input.picks.length} reference videos — fuse the strongest elements of each into one cohesive style.`
       : `You have one reference video — clone its style as closely as possible.`;
 
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [

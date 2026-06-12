@@ -7,7 +7,7 @@ import OpenAI from "openai";
 import type { Highlight } from "./assemblyai";
 import type { TranscriptionResult, WordTimestamp } from "./whisper";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
 const MODEL = "gpt-4o-mini";
 
 // Build a transcript with periodic [12.3s] markers so the model can locate
@@ -43,7 +43,7 @@ export async function detectHighlightsFromTranscript(
   const transcript =
     words.length > 0 ? timestampedTranscript(words) : text;
 
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -123,7 +123,7 @@ export async function selectBestSegment(
   const maxLen = Math.max(minLen, opts?.maxLen ?? 60);
   const transcript = timestampedTranscript(words);
 
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -169,7 +169,7 @@ Rules: start and end are seconds within 0-${duration.toFixed(1)}; start < end.`,
 export async function generateClipTitle(text: string): Promise<string> {
   if (!text.trim()) return "";
 
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     messages: [
       {

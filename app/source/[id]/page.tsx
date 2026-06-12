@@ -579,16 +579,6 @@ export default function SourcePage({ params }: { params: Promise<{ id: string }>
     });
   }
 
-  // Reset splice to the current in/out selection (or full video). currentTime
-  // is SEQUENCE-time, so reset it to 0 so the playhead is at the sequence start.
-  function startSplice() {
-    const start = outTime > inTime ? inTime : 0;
-    const end = outTime > inTime ? outTime : duration;
-    setSpliceSegments([{ id: crypto.randomUUID(), start, end }]);
-    setSelectedSpliceId(null);
-    setCurrentTime(0);
-  }
-
   // Auto-seed a single full-video splice segment once duration is known.
   // This means the editor always opens in splice mode — scissors = add splice point.
   useEffect(() => {

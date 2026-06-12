@@ -4,7 +4,7 @@
 
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
 const MODEL = "gpt-4o-mini";
 
 export interface CoachComment {
@@ -24,7 +24,7 @@ export async function evaluateClip(input: {
   transcript: string;
   durationSec: number;
 }): Promise<CoachReport> {
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [

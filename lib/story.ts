@@ -5,7 +5,7 @@
 
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
 const MODEL = "gpt-4o-mini";
 
 export const TTS_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
@@ -59,7 +59,7 @@ export async function generateStoryPlan(input: {
   const clipTranscript =
     input.words.length > 0 ? timestamped(input.words) : "(no transcript available)";
 
-  const res = await openai.chat.completions.create({
+  const res = await getOpenAI().chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -141,7 +141,7 @@ Use 3 to 5 beats, in chronological order. The first beat must be the hook.`,
 
 /** Generate spoken voiceover audio (mp3) from a script with OpenAI TTS. */
 export async function generateVoiceover(script: string, voice: TtsVoice): Promise<Buffer> {
-  const res = await openai.audio.speech.create({
+  const res = await getOpenAI().audio.speech.create({
     model: "tts-1",
     voice,
     input: script.slice(0, 4000),

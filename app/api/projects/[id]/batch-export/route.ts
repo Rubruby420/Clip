@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { exportClip, generateSRT, generateOverlayAss, tmpPath } from "@/lib/ffmpeg";
-import { resolveStorage, ensureDirFor, clipExportPath, projectLogoPath } from "@/lib/storage";
+import { resolveStorage, ensureDirFor, clipExportPath } from "@/lib/storage";
 import fs from "fs";
 import https from "https";
 import http from "http";
