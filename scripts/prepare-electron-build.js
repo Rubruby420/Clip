@@ -39,4 +39,13 @@ copyDir(staticSrc, staticDst);
 console.log('Copying public/ → standalone/public …');
 copyDir(publicSrc, publicDst);
 
+// Next.js bundles .env / .env.local into standalone — strip them so the
+// packaged app never ships with dev API keys.
+const envFiles = ['.env', '.env.local', '.env.production', '.env.development',
+                  '.env.production.local', '.env.development.local'];
+for (const f of envFiles) {
+  const p = path.join(standalone, f);
+  if (fs.existsSync(p)) { fs.unlinkSync(p); console.log(`Removed ${f} from standalone.`); }
+}
+
 console.log('Standalone is ready to package.');
