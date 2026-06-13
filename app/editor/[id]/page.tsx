@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
-  Film, Type, Layout, Sparkles, BookOpen, Gauge, Image as ImageIcon,
+  Film, Type, Layout, Sparkles, BookOpen, Gauge, Image as ImageIcon, Share2,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import Timeline from "@/components/editor/Timeline";
@@ -22,6 +22,7 @@ import { useDocumentHistory } from "@/components/editor/useDocumentHistory";
 import { useUndoRedo, useUndoRedoShortcuts } from "@/lib/useUndoRedo";
 import { DEFAULT_CAPTION_CONFIG, type CaptionConfig } from "@/lib/captions";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
+import PublishDialog from "@/components/PublishDialog";
 
 interface WordTimestamp { word: string; start: number; end: number; }
 interface Clip {
@@ -67,6 +68,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
   const [showExportModal, setShowExportModal] = useState(false);
   const [showExportSuccess, setShowExportSuccess] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
 
   const [aiCutting, setAiCutting] = useState(false);
   const [aiCutReason, setAiCutReason] = useState<string | null>(null);
@@ -482,6 +484,15 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
               <Download className="w-3.5 h-3.5" /> Download
             </button>
           )}
+          {exportUrl && (
+            <button
+              onClick={() => setShowPublishDialog(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-700 hover:bg-brand-600 text-white text-xs rounded-lg font-medium transition-colors"
+              title="Publish directly to TikTok, YouTube Shorts, or Instagram Reels"
+            >
+              <Share2 className="w-3.5 h-3.5" /> Publish
+            </button>
+          )}
           <button
             onClick={() => setShowExportModal(true)}
             disabled={exporting || !videoSrc}
@@ -812,6 +823,12 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
             >
               <Download className="w-4 h-4" /> Download to my device
             </button>
+            <button
+              onClick={() => { setShowExportSuccess(false); setShowPublishDialog(true); }}
+              className="w-full py-2.5 border border-brand-600 hover:border-brand-500 text-brand-300 hover:text-white rounded-xl text-sm transition-colors flex items-center justify-center gap-2 mb-2"
+            >
+              <Share2 className="w-4 h-4" /> Publish to TikTok / YouTube / Instagram
+            </button>
             {words.length > 0 && (
               <a
                 href={`/api/clips/${id}/srt`}
@@ -852,6 +869,15 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           </div>
         </div>
       )}
+
+      {/* Publish dialog */}
+      <PublishDialog
+        source="clip"
+        id={id}
+        defaultTitle={clip?.title ?? ""}
+        isOpen={showPublishDialog}
+        onClose={() => setShowPublishDialog(false)}
+      />
     </div>
   );
 }

@@ -3,9 +3,10 @@
 
 import { useEffect, useRef, useState, use, useMemo } from "react";
 import Link from "next/link";
-import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines, GripVertical, Search, ChevronDown, ChevronUp, Download } from "lucide-react";
+import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines, GripVertical, Search, ChevronDown, ChevronUp, Download, Share2 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
+import PublishDialog from "@/components/PublishDialog";
 
 type ClipStatus = "none" | "done" | "skip" | "review";
 
@@ -105,6 +106,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [reelUrl, setReelUrl] = useState<string | null>(null);
   const [reelN, setReelN] = useState(5);
   const [reelOpen, setReelOpen] = useState(true);
+  const [showReelPublish, setShowReelPublish] = useState(false);
 
   // Hover-to-play
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
@@ -474,7 +476,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 <span className="text-white text-sm font-medium">Highlight Reel</span>
                 <span className="text-surface-500 text-xs">top {reelN} clips</span>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowReelPublish(true); }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-brand-700 text-brand-300 hover:text-white hover:border-brand-500 text-xs font-medium transition-colors"
+                >
+                  <Share2 className="w-3 h-3" /> Publish
+                </button>
                 <a
                   href={downloadUrl(reelUrl, `${project.title.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-highlight-reel.mp4`)}
                   download
@@ -786,6 +794,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <span>{reelPct}%</span>
           </div>
         </div>
+      )}
+
+      {/* Reel publish dialog */}
+      {project && (
+        <PublishDialog
+          source="reel"
+          id={project.id}
+          defaultTitle={`${project.title} — Highlight Reel`}
+          isOpen={showReelPublish}
+          onClose={() => setShowReelPublish(false)}
+        />
       )}
 
     </div>

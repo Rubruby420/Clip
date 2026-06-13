@@ -2,13 +2,31 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-type ConfigKey = "OPENAI_API_KEY" | "ASSEMBLYAI_API_KEY" | "YOUTUBE_API_KEY" | "JAMENDO_CLIENT_ID";
+type ConfigKey =
+  | "OPENAI_API_KEY"
+  | "ASSEMBLYAI_API_KEY"
+  | "YOUTUBE_API_KEY"
+  | "JAMENDO_CLIENT_ID"
+  | "TIKTOK_CLIENT_KEY"
+  | "TIKTOK_CLIENT_SECRET"
+  | "YOUTUBE_OAUTH_CLIENT_ID"
+  | "YOUTUBE_OAUTH_CLIENT_SECRET"
+  | "INSTAGRAM_APP_ID"
+  | "INSTAGRAM_APP_SECRET"
+  | "PUBLIC_BASE_URL";
 
 const KEYS: ConfigKey[] = [
   "OPENAI_API_KEY",
   "ASSEMBLYAI_API_KEY",
   "YOUTUBE_API_KEY",
   "JAMENDO_CLIENT_ID",
+  "TIKTOK_CLIENT_KEY",
+  "TIKTOK_CLIENT_SECRET",
+  "YOUTUBE_OAUTH_CLIENT_ID",
+  "YOUTUBE_OAUTH_CLIENT_SECRET",
+  "INSTAGRAM_APP_ID",
+  "INSTAGRAM_APP_SECRET",
+  "PUBLIC_BASE_URL",
 ];
 
 function mask(value: string | undefined): string {
