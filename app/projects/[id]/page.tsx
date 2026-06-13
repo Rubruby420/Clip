@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState, use, useMemo } from "react";
 import Link from "next/link";
-import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines, GripVertical, Search } from "lucide-react";
+import { ArrowLeft, Film, Clock, Zap, Edit3, Loader2, AlertCircle, CheckCircle, AlertTriangle, Scissors, AudioLines, GripVertical, Search, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { fileUrl, downloadUrl } from "@/lib/file-urls";
 
@@ -103,8 +103,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [reelPct, setReelPct] = useState(0);
   const [reelTotal, setReelTotal] = useState(0);
   const [reelUrl, setReelUrl] = useState<string | null>(null);
-  const [reelDone, setReelDone] = useState(false);
   const [reelN, setReelN] = useState(5);
+  const [reelOpen, setReelOpen] = useState(true);
 
   // Hover-to-play
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
@@ -231,7 +231,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   async function handleHighlightReel() {
     setReelExporting(true);
     setReelPct(0);
-    setReelDone(false);
+    setReelOpen(false);
     try {
       const res = await fetch(`/api/projects/${id}/highlight-reel`, {
         method: "POST",
@@ -260,7 +260,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             } else if (evt.type === "done") {
               setReelUrl(String(evt.url));
               setReelPct(100);
-              setReelDone(true);
+              setReelOpen(true);
             } else if (evt.type === "error") {
               console.error("Highlight reel error:", evt.error);
             }
@@ -428,16 +428,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     className="w-12 text-center bg-surface-800 border border-surface-600 text-surface-300 text-sm rounded-lg py-2 focus:outline-none focus:border-brand-500"
                     title="Number of top clips to include"
                   />
-                  {reelUrl && !reelExporting && (
-                    <a
-                      href={downloadUrl(reelUrl, `${project.title.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-highlight-reel.mp4`)}
-                      download
-                      className="flex items-center gap-1 px-3 py-2 border border-green-700/60 text-green-300 hover:bg-green-900/30 text-sm rounded-lg font-medium transition-colors"
-                      title="Download the last generated highlight reel"
-                    >
-                      ↓ Reel
-                    </a>
-                  )}
                 </div>
               )}
               <Link
@@ -469,6 +459,44 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   : "Building the waveform and a smooth 720p preview so you can start clipping…"}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Highlight reel preview */}
+        {reelUrl && !reelExporting && (
+          <div className="bg-surface-800 border border-surface-600 rounded-xl mb-6 overflow-hidden">
+            <button
+              onClick={() => setReelOpen((o) => !o)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-700/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Film className="w-4 h-4 text-brand-400" />
+                <span className="text-white text-sm font-medium">Highlight Reel</span>
+                <span className="text-surface-500 text-xs">top {reelN} clips</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <a
+                  href={downloadUrl(reelUrl, `${project.title.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-highlight-reel.mp4`)}
+                  download
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-surface-600 text-surface-300 hover:text-white hover:border-surface-500 text-xs font-medium transition-colors"
+                >
+                  <Download className="w-3 h-3" /> Download
+                </a>
+                {reelOpen ? <ChevronUp className="w-4 h-4 text-surface-500" /> : <ChevronDown className="w-4 h-4 text-surface-500" />}
+              </div>
+            </button>
+            {reelOpen && (
+              <div className="px-4 pb-4">
+                <video
+                  src={fileUrl(reelUrl)}
+                  controls
+                  playsInline
+                  className="w-full max-h-[480px] rounded-lg bg-black object-contain"
+                  style={{ aspectRatio: "9/16", maxWidth: "270px", margin: "0 auto", display: "block" }}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -760,30 +788,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       )}
 
-      {/* Highlight reel done banner */}
-      {reelDone && !reelExporting && reelUrl && (
-        <div className="fixed bottom-6 left-6 z-50 bg-surface-800 border border-green-700/60 rounded-2xl shadow-2xl p-5 w-80">
-          <div className="flex items-start gap-3">
-            <Film className="w-5 h-5 text-green-400 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <p className="text-white text-sm font-semibold">Highlight reel ready!</p>
-              <a
-                href={downloadUrl(reelUrl, `${project?.title.replace(/[^a-z0-9]/gi, "-").toLowerCase() ?? "highlight"}-reel.mp4`)}
-                download
-                className="inline-flex items-center gap-1 mt-1.5 text-xs text-green-300 hover:text-green-100 underline underline-offset-2"
-              >
-                Download reel
-              </a>
-            </div>
-            <button
-              onClick={() => setReelDone(false)}
-              className="text-surface-500 hover:text-white transition-colors text-lg leading-none"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
