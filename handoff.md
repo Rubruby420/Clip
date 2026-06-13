@@ -1,5 +1,26 @@
 # Clip — Session Handoff
-*Last updated: 2026-06-12*
+*Last updated: 2026-06-13*
+
+---
+
+## Session 2026-06-13 — Highlight Reel export
+
+### What shipped (commits `f6d5d2d`, `ca98dae`)
+
+New **Highlight Reel** button on the project page — stitches the top N clips (by score, best first) into a single downloadable MP4.
+
+**How it works:**
+- User sets N (default 5) via a number input next to the button
+- Single `buildHighlightReel()` FFmpeg call: `-ss BEFORE -i` (fast keyframe seek) for each input, then one concat-filter pass — all N clips in one process
+- 9:16 vertical with blurred-fill background, same as clip exports
+- SSE progress stream → overall % bar in the bottom-left corner
+- "Download reel" anchor appears on completion; GET route re-surfaces it after page reload
+
+**Key fix (ca98dae):** First attempt used `exportSplicedClip` which places `-ss AFTER -i` (decode-from-start). On a 5.1 GB source, segment 4 (at 198 s) failed on Windows with exit code 4294967294. New `buildHighlightReel()` in `lib/ffmpeg.ts` uses fast seeks and a single concat-filter pass — faster and reliable.
+
+**Files changed:** `lib/ffmpeg.ts` (+`buildHighlightReel`), `lib/storage.ts` (+`projectHighlightReelPath`), `app/api/projects/[id]/highlight-reel/route.ts` (new), `app/projects/[id]/page.tsx` (button + progress + download).
+
+No Prisma migration. Reel written to `<projectId>/highlight-reel.mp4` on disk.
 
 ---
 
