@@ -98,6 +98,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   } | null>(null);
   const [batchDone, setBatchDone] = useState<{ exported: number; total: number } | null>(null);
 
+  // Highlight reel state
+  const [reelExporting, setReelExporting] = useState(false);
+  const [reelProgress, setReelProgress] = useState<{
+    idx: number; total: number; title: string; pct: number;
+  } | null>(null);
+  const [reelUrl, setReelUrl] = useState<string | null>(null);
+  const [reelDone, setReelDone] = useState(false);
+  const [reelN, setReelN] = useState(5);
+
   // Hover-to-play
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
 
@@ -220,6 +229,50 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  async function handleHighlightReel() {
+    setReelExporting(true);
+    setReelProgress(null);
+    setReelDone(false);
+    try {
+      const res = await fetch(`/api/projects/${id}/highlight-reel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ n: reelN, aspectRatio: "9:16", blurBackground: true }),
+      });
+      if (!res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as Record<string, unknown>;
+            if (evt.type === "start") {
+              setReelProgress({ idx: 0, total: Number(evt.total), title: "", pct: 0 });
+            } else if (evt.type === "progress") {
+              setReelProgress({ idx: Number(evt.idx), total: Number(evt.total), title: String(evt.title), pct: Number(evt.pct) });
+            } else if (evt.type === "done") {
+              setReelUrl(String(evt.url));
+              setReelDone(true);
+            } else if (evt.type === "error") {
+              console.error("Highlight reel error:", evt.error);
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.error("Highlight reel error:", err);
+    } finally {
+      setReelExporting(false);
+    }
+  }
+
   async function fetchProject() {
     const res = await fetch(`/api/projects/${id}`);
     if (!res.ok) return;
@@ -268,6 +321,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.status]);
+
+  // Load existing reel URL on mount
+  useEffect(() => {
+    fetch(`/api/projects/${id}/highlight-reel`)
+      .then((r) => r.json())
+      .then((d) => { if (d.url) setReelUrl(d.url); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (loading) {
     return (
@@ -344,6 +406,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   {batchExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                   {batchExporting ? "Exporting…" : "Export All"}
                 </button>
+              )}
+              {project.clips.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleHighlightReel}
+                    disabled={reelExporting}
+                    className="flex items-center gap-1.5 px-4 py-2 border border-surface-600 text-surface-300 hover:bg-surface-700 disabled:opacity-50 text-sm rounded-lg font-medium transition-colors"
+                    title="Stitch the top clips into one highlight reel"
+                  >
+                    {reelExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
+                    {reelExporting ? "Stitching…" : "Highlight Reel"}
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={project.clips.length}
+                    value={reelN}
+                    onChange={(e) => setReelN(Math.max(1, Math.min(project.clips.length, Number(e.target.value) || 1)))}
+                    className="w-12 text-center bg-surface-800 border border-surface-600 text-surface-300 text-sm rounded-lg py-2 focus:outline-none focus:border-brand-500"
+                    title="Number of top clips to include"
+                  />
+                  {reelUrl && !reelExporting && (
+                    <a
+                      href={downloadUrl(reelUrl, `${project.title.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-highlight-reel.mp4`)}
+                      download
+                      className="flex items-center gap-1 px-3 py-2 border border-green-700/60 text-green-300 hover:bg-green-900/30 text-sm rounded-lg font-medium transition-colors"
+                      title="Download the last generated highlight reel"
+                    >
+                      ↓ Reel
+                    </a>
+                  )}
+                </div>
               )}
               <Link
                 href={`/source/${project.id}`}
@@ -635,6 +729,63 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
             <button
               onClick={() => setBatchDone(null)}
+              className="text-surface-500 hover:text-white transition-colors text-lg leading-none"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Highlight reel progress overlay */}
+      {reelExporting && reelProgress && (
+        <div className="fixed bottom-6 left-6 z-50 bg-surface-800 border border-surface-600 rounded-2xl shadow-2xl p-5 w-80">
+          <div className="flex items-center gap-2 mb-2">
+            <Film className="w-4 h-4 text-brand-400 shrink-0" />
+            <p className="text-white text-sm font-semibold">
+              Stitching clip {reelProgress.idx + 1} / {reelProgress.total}
+            </p>
+          </div>
+          {reelProgress.title && (
+            <p className="text-surface-400 text-xs mb-3 truncate">{reelProgress.title}</p>
+          )}
+          <div className="h-1.5 bg-surface-700 rounded-full overflow-hidden mb-1">
+            <div
+              className="h-full bg-brand-500 rounded-full transition-[width] duration-300"
+              style={{ width: `${reelProgress.pct}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] text-surface-500 mb-3">
+            <span>Current clip</span>
+            <span>{reelProgress.pct}%</span>
+          </div>
+          <div className="h-1 bg-surface-700 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-brand-700 rounded-full transition-[width] duration-300"
+              style={{ width: `${((reelProgress.idx + reelProgress.pct / 100) / reelProgress.total) * 100}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-surface-600 mt-1 text-right">Overall progress</p>
+        </div>
+      )}
+
+      {/* Highlight reel done banner */}
+      {reelDone && !reelExporting && reelUrl && (
+        <div className="fixed bottom-6 left-6 z-50 bg-surface-800 border border-green-700/60 rounded-2xl shadow-2xl p-5 w-80">
+          <div className="flex items-start gap-3">
+            <Film className="w-5 h-5 text-green-400 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p className="text-white text-sm font-semibold">Highlight reel ready!</p>
+              <a
+                href={downloadUrl(reelUrl, `${project?.title.replace(/[^a-z0-9]/gi, "-").toLowerCase() ?? "highlight"}-reel.mp4`)}
+                download
+                className="inline-flex items-center gap-1 mt-1.5 text-xs text-green-300 hover:text-green-100 underline underline-offset-2"
+              >
+                Download reel
+              </a>
+            </div>
+            <button
+              onClick={() => setReelDone(false)}
               className="text-surface-500 hover:text-white transition-colors text-lg leading-none"
             >
               ×

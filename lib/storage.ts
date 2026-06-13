@@ -82,6 +82,11 @@ export function thumbnailMemoryPath(): string {
   return `_thumbnail/memory.json`;
 }
 
+/** Relative path for a project's stitched highlight reel. */
+export function projectHighlightReelPath(projectId: string): string {
+  return `${projectId}/highlight-reel.mp4`;
+}
+
 /** Stream a file off disk — used by the file route. */
 export function openReadStream(absPath: string, start?: number, end?: number) {
   return createReadStream(absPath, start != null && end != null ? { start, end } : {});
