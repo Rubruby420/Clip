@@ -3,6 +3,29 @@
 
 ---
 
+## Session 2026-06-12 — Thumbnail Generator + CI fixes
+
+### What shipped — Thumbnail Generator (commit `16d5d93`)
+
+New **Thumbnail** tab in the clip editor (rightmost tab, image icon). Smoke tested and confirmed working.
+
+**Per-generation pipeline:**
+1. 7 candidate frames extracted evenly across the clip window
+2. Live YouTube niche search — downloads top-5 high-res thumbnails as style references
+3. One GPT-4o vision call — picks best frame, designs headline/color/position/crop
+4. Text burned in via ASS subtitle over a 1-frame FFmpeg loop (reuses Windows `:` escape logic)
+5. **AI Background mode** (optional) — sends chosen frame to `gpt-image-1` for dramatic stylisation before text
+
+**Feedback + learning loop:**
+- 👍 saves a lightweight positive lesson to global memory
+- 👎 expands: "how can I do better?" textarea + optional example image upload → GPT-4o distils 2–4 design rules → written to `D:\clip\_thumbnail\memory.json` → injected into every future generation across all clips
+
+**Zero Prisma migration:** generated image reuses existing `clip.thumbnailUrl` column; recipe + feedback cached in `thumbnail.json` inside the clip folder. Generated thumbnail appears on project page card automatically.
+
+**Key new files:** `lib/thumbnail.ts`, `lib/thumbnail-memory.ts`, `lib/ffmpeg.ts` (3 new helpers), `lib/storage.ts` (4 path helpers), `lib/youtube.ts` (thumbnailHigh field), `app/api/clips/[id]/thumbnail/route.ts`, `app/api/clips/[id]/thumbnail/feedback/route.ts`, `components/editor/ThumbnailPanel.tsx`.
+
+---
+
 ## Session 2026-06-12 — GitHub Actions Node.js upgrade + v0.2.2
 
 ### What shipped
