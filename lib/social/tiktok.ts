@@ -1,6 +1,6 @@
 import "server-only";
 import fs from "fs";
-import { createState, redirectUri } from "./oauth";
+import { createState, redirectUri, generatePKCE } from "./oauth";
 import { TokenData } from "./tokens";
 
 const CLIENT_KEY = () => process.env.TIKTOK_CLIENT_KEY ?? "";
@@ -19,28 +19,34 @@ export type TikTokPrivacy =
   | "SELF_ONLY";
 
 export function getAuthUrl(): string {
-  const state = createState();
+  const { codeVerifier, codeChallenge } = generatePKCE();
+  const state = createState(codeVerifier);
   const params = new URLSearchParams({
     client_key: CLIENT_KEY(),
     response_type: "code",
     scope: "user.info.basic,video.publish",
     redirect_uri: redirectUri("tiktok"),
     state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
   });
   return `${AUTH_BASE}?${params}`;
 }
 
-export async function exchangeCode(code: string): Promise<TokenData> {
+export async function exchangeCode(code: string, codeVerifier?: string): Promise<TokenData> {
+  const params: Record<string, string> = {
+    client_key: CLIENT_KEY(),
+    client_secret: CLIENT_SECRET(),
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri("tiktok"),
+  };
+  if (codeVerifier) params.code_verifier = codeVerifier;
+
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_key: CLIENT_KEY(),
-      client_secret: CLIENT_SECRET(),
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri("tiktok"),
-    }),
+    body: new URLSearchParams(params),
   });
   if (!res.ok) throw new Error(`TikTok token exchange failed: ${res.status} ${await res.text()}`);
   const json = await res.json();

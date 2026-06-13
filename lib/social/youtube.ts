@@ -29,7 +29,7 @@ export function getAuthUrl(): string {
   return `${AUTH_URL}?${params}`;
 }
 
-export async function exchangeCode(code: string): Promise<TokenData> {
+export async function exchangeCode(code: string, _codeVerifier?: string): Promise<TokenData> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -23,7 +23,7 @@ export function getAuthUrl(): string {
   return `${FB_AUTH}?${params}`;
 }
 
-export async function exchangeCode(code: string): Promise<TokenData> {
+export async function exchangeCode(code: string, _codeVerifier?: string): Promise<TokenData> {
   // 1. Short-lived token
   const res = await fetch(
     `${FB_TOKEN}?${new URLSearchParams({

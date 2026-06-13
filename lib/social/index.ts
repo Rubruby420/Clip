@@ -16,7 +16,7 @@ export const ALL_PLATFORMS: SocialPlatform[] = ["tiktok", "youtube", "instagram"
 
 interface Driver {
   getAuthUrl(): string;
-  exchangeCode(code: string): Promise<TokenData>;
+  exchangeCode(code: string, codeVerifier?: string): Promise<TokenData>;
   refreshAccessToken(current: TokenData): Promise<TokenData>;
 }
 

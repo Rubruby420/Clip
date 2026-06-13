@@ -24,14 +24,15 @@ export async function GET(
     return NextResponse.redirect(settingsUrl);
   }
 
-  // CSRF check
-  if (!verifyState(state)) {
+  // CSRF check — also retrieves codeVerifier if PKCE was used
+  const stateResult = verifyState(state);
+  if (!stateResult.valid) {
     settingsUrl.searchParams.set("socialError", "invalid_state");
     return NextResponse.redirect(settingsUrl);
   }
 
   try {
-    const token = await getDriver(platform).exchangeCode(code);
+    const token = await getDriver(platform).exchangeCode(code, stateResult.codeVerifier);
     saveToken(platform, token);
     settingsUrl.searchParams.set("socialConnected", platform);
     return NextResponse.redirect(settingsUrl);
