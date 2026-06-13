@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  allowedDevOrigins: ["*.trycloudflare.com", "*.loca.lt", "*.ngrok-free.app", "*.ngrok.io"],
   serverExternalPackages: ["ffmpeg-static", "@prisma/client"],
   experimental: {
     serverActions: { bodySizeLimit: "10gb" },

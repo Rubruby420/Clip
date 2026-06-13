@@ -3,6 +3,64 @@
 
 ---
 
+## Session 2026-06-13 — Direct Social Publish (TikTok / YouTube Shorts / Instagram Reels)
+
+### What shipped (commits `bea5c05`, `00a853a`, `1c2b362`)
+
+New **Publish** flow — skip the download → manual re-upload step entirely. Finished clips and highlight reels can be posted directly to TikTok, YouTube Shorts, and Instagram Reels from inside Clip.
+
+**Architecture:**
+- `lib/social/tokens.ts` — token persistence to `D:\clip\_social\tokens.json` (no DB migration)
+- `lib/social/oauth.ts` — CSRF state map + PKCE helpers (`generatePKCE`, `verifyState`)
+- `lib/social/tiktok.ts` — TikTok v2 OAuth + PKCE + chunked FILE_UPLOAD byte upload → poll publish status
+- `lib/social/youtube.ts` — Google OAuth + resumable upload → `#Shorts` title suffix
+- `lib/social/instagram.ts` — Facebook Login → IG Business user → container-create → poll → publish (requires HTTPS tunnel)
+- `lib/social/index.ts` — driver registry
+- `app/api/social/[platform]/connect/route.ts` — starts OAuth; guards empty credentials with redirect to Settings + plain-English error
+- `app/api/social/[platform]/callback/route.ts` — code exchange (passes `codeVerifier` for TikTok PKCE)
+- `app/api/social/[platform]/route.ts` — GET status / DELETE disconnect
+- `app/api/social/publish/route.ts` — SSE-streaming publish (clip or highlight reel)
+- `components/PublishDialog.tsx` — shared modal: platform picker, caption/title/privacy fields, SSE progress bar, success link
+- Publish buttons added to: clip editor toolbar + export-success modal, highlight reel card on project page
+- Settings page extended with `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET`, `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `PUBLIC_BASE_URL` credential inputs + a Connected Accounts section
+
+**Key fixes made during setup:**
+- `allowedDevOrigins` moved to top-level in `next.config.ts` (was erroneously inside `experimental`) — wildcard `*.trycloudflare.com` / `*.loca.lt` / `*.ngrok*` covers any tunnel URL without per-session config changes
+- TikTok PKCE — TikTok v2 mandates `code_challenge` / `code_challenge_method=S256`; added `generatePKCE()`, wired verifier through state map → callback → `exchangeCode`
+- Credential guard — `missingCredentials()` in connect route redirects to `/settings#connections` with plain-English error before building any OAuth URL; Connect button is a disabled `<span>` (not an `<a>`) until credentials are saved
+
+### Where we stopped — TikTok credentials setup in progress
+
+The tunnel is running and cloudflared binary is at `C:\clip\cloudflared.exe`.
+
+**Every time you resume:** start the cloudflared tunnel first:
+```powershell
+C:\clip\cloudflared.exe tunnel --url http://localhost:3000
+```
+Get the new `https://*.trycloudflare.com` URL from the metrics server:
+```powershell
+(Invoke-RestMethod "http://127.0.0.1:20241/metrics") -split "`n" | Select-String "trycloudflare"
+```
+
+**Steps remaining to complete TikTok connect:**
+1. Create TikTok dev app at https://developers.tiktok.com → add **Login Kit** + **Content Posting API** products
+2. Set redirect URI to `https://<tunnel-url>/api/social/tiktok/callback` and redirect domain to `<tunnel-url>` (no https://)
+3. Add your TikTok account as a tester (Sandbox → Manage users)
+4. Copy **Client Key** + **Client Secret** from the app dashboard
+5. In Clip Settings → App credentials: paste Client Key, Client Secret, and `PUBLIC_BASE_URL = https://<tunnel-url>`
+6. Save credentials → restart dev server → click Connect TikTok
+
+**After TikTok works:** YouTube Shorts (simpler — Google OAuth allows localhost, no tunnel needed) and Instagram Reels (also needs HTTPS tunnel, requires Business account + Facebook Page).
+
+**TikTok audit note:** Until the TikTok developer app passes audit, posts are `SELF_ONLY` (private to your account). The code is built for public posting — it just works once audited.
+
+### Docs written
+- `docs/social-setup-tiktok.md`
+- `docs/social-setup-youtube.md`
+- `docs/social-setup-instagram.md`
+
+---
+
 ## Session 2026-06-13 — Highlight Reel export
 
 ### What shipped (commits `f6d5d2d`, `ca98dae`)
