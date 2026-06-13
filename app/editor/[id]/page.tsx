@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Zap, Download, Loader2,
-  Film, Type, Layout, Sparkles, BookOpen, Gauge,
+  Film, Type, Layout, Sparkles, BookOpen, Gauge, Image as ImageIcon,
 } from "lucide-react";
 import CanvasPreview from "@/components/editor/CanvasPreview";
 import Timeline from "@/components/editor/Timeline";
@@ -14,6 +14,7 @@ import ViralTipsPanel from "@/components/editor/ViralTipsPanel";
 import CaptionPanel from "@/components/editor/CaptionPanel";
 import StoryPanel from "@/components/editor/StoryPanel";
 import CoachPanel from "@/components/editor/CoachPanel";
+import ThumbnailPanel from "@/components/editor/ThumbnailPanel";
 import UndoRedoButtons from "@/components/editor/UndoRedoButtons";
 import TranscriptModal from "@/components/editor/TranscriptModal";
 import PresetsPanel from "@/components/editor/PresetsPanel";
@@ -30,7 +31,7 @@ interface Clip {
   exportUrl: string | null;
 }
 
-type Tab = "story" | "layout" | "captions" | "viral" | "coach";
+type Tab = "story" | "layout" | "captions" | "viral" | "coach" | "thumbnail";
 type ExportAspect = "9:16" | "16:9" | "1:1";
 
 export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
@@ -382,6 +383,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
     captions: <Type className="w-4 h-4" />,
     viral: <Sparkles className="w-4 h-4" />,
     coach: <Gauge className="w-4 h-4" />,
+    thumbnail: <ImageIcon className="w-4 h-4" />,
   };
 
   return (
@@ -510,7 +512,7 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
         <aside className="w-64 border-r border-surface-600 bg-surface-800 flex flex-col overflow-y-auto shrink-0">
           {/* Tab switcher */}
           <div className="flex border-b border-surface-600">
-            {(["story", "layout", "captions", "viral", "coach"] as Tab[]).map((tab) => (
+            {(["story", "layout", "captions", "viral", "coach", "thumbnail"] as Tab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -563,6 +565,9 @@ export default function EditorPage({ params }: { params: Promise<{ id: string }>
           )}
           {activeTab === "viral" && <ViralTipsPanel clipId={clip.id} />}
           {activeTab === "coach" && <CoachPanel clipId={clip.id} />}
+          {activeTab === "thumbnail" && (
+            <ThumbnailPanel clipId={clip.id} clipTitle={clip.title} />
+          )}
         </aside>
 
         {/* Center — preview */}

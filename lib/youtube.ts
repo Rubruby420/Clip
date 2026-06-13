@@ -10,7 +10,8 @@ export interface ViralVideo {
   channelTitle: string;
   description: string;
   tags: string[];
-  thumbnailUrl: string;
+  thumbnailUrl: string;   // medium quality
+  thumbnailHigh: string;  // maxres/high quality — for vision analysis
   viewCount: number;
   likeCount: number;
   commentCount: number;
@@ -107,6 +108,9 @@ export async function searchViralVideos(queries: string[]): Promise<ViralVideo[]
       description: (sn.description ?? "").slice(0, 400),
       tags: Array.isArray(sn.tags) ? sn.tags.slice(0, 15) : [],
       thumbnailUrl:
+        sn.thumbnails?.medium?.url ?? sn.thumbnails?.default?.url ?? "",
+      thumbnailHigh:
+        sn.thumbnails?.maxres?.url ?? sn.thumbnails?.high?.url ??
         sn.thumbnails?.medium?.url ?? sn.thumbnails?.default?.url ?? "",
       viewCount,
       likeCount: Number(stats.likeCount || 0),

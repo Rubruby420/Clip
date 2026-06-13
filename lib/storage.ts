@@ -62,6 +62,26 @@ export function projectLogoPath(projectId: string): string {
   return `${projectId}/logo.png`;
 }
 
+/** Relative path for a clip's AI-generated thumbnail image. */
+export function clipThumbnailGenPath(projectId: string, clipId: string): string {
+  return `${projectId}/clips/${clipId}/thumb-gen.jpg`;
+}
+
+/** Relative path for a clip's thumbnail recipe + feedback JSON cache. */
+export function clipThumbnailDataPath(projectId: string, clipId: string): string {
+  return `${projectId}/clips/${clipId}/thumbnail.json`;
+}
+
+/** Relative path for a numbered user-supplied example thumbnail image. */
+export function clipThumbnailExamplePath(projectId: string, clipId: string, n: number): string {
+  return `${projectId}/clips/${clipId}/thumb-example-${n}.png`;
+}
+
+/** Relative path for the global thumbnail learning memory file. */
+export function thumbnailMemoryPath(): string {
+  return `_thumbnail/memory.json`;
+}
+
 /** Stream a file off disk — used by the file route. */
 export function openReadStream(absPath: string, start?: number, end?: number) {
   return createReadStream(absPath, start != null && end != null ? { start, end } : {});

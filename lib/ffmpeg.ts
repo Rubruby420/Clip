@@ -513,3 +513,162 @@ export function tmpPath(name: string): string {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, name);
 }
+
+// ---------------------------------------------------------------------------
+// Thumbnail generator helpers
+// ---------------------------------------------------------------------------
+
+/** Extract N candidate frames from a clip at the given time offsets (seconds). */
+export async function extractCandidateFrames(
+  videoPath: string,
+  times: number[],
+  outDir: string
+): Promise<string[]> {
+  fs.mkdirSync(outDir, { recursive: true });
+  const paths: string[] = [];
+  for (let i = 0; i < times.length; i++) {
+    const outPath = path.join(outDir, `frame-${i}.jpg`);
+    await extractThumbnail(videoPath, outPath, times[i]);
+    paths.push(outPath);
+  }
+  return paths;
+}
+
+/** Probe an image file's pixel dimensions. Falls back to 1280×720 on any error. */
+async function getImageDimensions(imgAbs: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const child = spawn(ffmpegBin(), ["-i", imgAbs], { windowsHide: true });
+    let stderr = "";
+    child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    child.on("close", () => {
+      // Match "1920x1080" style dimensions in the video stream line.
+      const m = stderr.match(/,\s*(\d{2,5})x(\d{2,5})[,\s]/);
+      if (m) resolve({ w: parseInt(m[1], 10), h: parseInt(m[2], 10) });
+      else resolve({ w: 1280, h: 720 });
+    });
+  });
+}
+
+export interface ThumbnailTextRecipe {
+  headline: string;
+  subText?: string;
+  fontName: string;
+  fontSizePct: number;   // % of image height, e.g. 12
+  textColor: string;     // hex e.g. "#FFFFFF"
+  strokeColor: string;   // hex e.g. "#000000"
+  position: { v: "top" | "center" | "bottom"; h: "left" | "center" | "right" };
+  cropFocus?: { x: number; y: number; zoom: number };
+}
+
+/** Convert a #RRGGBB hex colour to an ASS &H00BBGGRR colour string. */
+function hexToAss(hex: string): string {
+  const h = hex.replace("#", "");
+  const r = h.slice(0, 2);
+  const g = h.slice(2, 4);
+  const b = h.slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
+}
+
+/**
+ * Build a minimal ASS subtitle file that renders a headline (and optional
+ * sub-text line) as a single static overlay for a 2-second window starting
+ * at t=0. Used by renderThumbnailStill.
+ */
+export function generateThumbnailAss(recipe: ThumbnailTextRecipe, videoW: number, videoH: number): string {
+  const fontSize = Math.round(videoH * (recipe.fontSizePct / 100));
+  const subFontSize = Math.round(fontSize * 0.55);
+  const marginEdge = Math.round(videoH * 0.06);
+  const primaryColour = hexToAss(recipe.textColor);
+  const outlineColour = hexToAss(recipe.strokeColor);
+  const outline = Math.max(2, Math.round(fontSize * 0.08));
+
+  // ASS alignment integers: (v row) * 3 + (h col), 1-indexed
+  // top-left=7, top-center=8, top-right=9
+  // mid-left=4, mid-center=5, mid-right=6
+  // bot-left=1, bot-center=2, bot-right=3
+  const alignMap: Record<string, Record<string, number>> = {
+    top:    { left: 7, center: 8, right: 9 },
+    center: { left: 4, center: 5, right: 6 },
+    bottom: { left: 1, center: 2, right: 3 },
+  };
+  const alignment = alignMap[recipe.position.v]?.[recipe.position.h] ?? 2;
+
+  const marginV = recipe.position.v === "center" ? 0 : marginEdge;
+  const marginH = recipe.position.h === "center" ? 0 : marginEdge;
+  const marginL = recipe.position.h === "left"  ? marginH : 0;
+  const marginR = recipe.position.h === "right" ? marginH : 0;
+
+  const lines: string[] = [];
+  lines.push("[Script Info]");
+  lines.push("ScriptType: v4.00+");
+  lines.push(`PlayResX: ${videoW}`);
+  lines.push(`PlayResY: ${videoH}`);
+  lines.push("ScaledBorderAndShadow: yes");
+  lines.push("");
+  lines.push("[V4+ Styles]");
+  lines.push(
+    "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
+  );
+  lines.push(
+    `Style: Headline,${recipe.fontName},${fontSize},${primaryColour},${outlineColour},&H00000000,1,0,0,0,100,100,0,0,1,${outline},2,${alignment},${marginL},${marginR},${marginV},1`
+  );
+  lines.push(
+    `Style: Sub,${recipe.fontName},${subFontSize},${primaryColour},${outlineColour},&H00000000,0,0,0,0,100,100,0,0,1,${Math.max(1, Math.round(outline * 0.6))},1,${alignment},${marginL},${marginR},${marginV + subFontSize + Math.round(videoH * 0.01)},1`
+  );
+  lines.push("");
+  lines.push("[Events]");
+  lines.push("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
+
+  const safe = (s: string) => s.replace(/[{}]/g, "").replace(/[\r\n]+/g, " ").trim();
+
+  if (recipe.headline?.trim()) {
+    lines.push(`Dialogue: 0,0:00:00.00,0:00:02.00,Headline,,0,0,0,,${safe(recipe.headline)}`);
+  }
+  if (recipe.subText?.trim()) {
+    lines.push(`Dialogue: 0,0:00:00.00,0:00:02.00,Sub,,0,0,0,,${safe(recipe.subText)}`);
+  }
+
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Burn a text overlay onto a still image using FFmpeg.
+ * Treats the JPG/PNG as a 1-frame looped video, applies the ASS subtitle
+ * (which is active from t=0), then extracts the single output frame.
+ * The `:` escape Windows gotcha is handled here (same as exportClip).
+ */
+export async function renderThumbnailStill(
+  baseImgAbs: string,
+  recipe: ThumbnailTextRecipe,
+  outAbs: string
+): Promise<void> {
+  const bin = ffmpegBin();
+
+  // Generate ASS in a temp file
+  const { w, h } = await getImageDimensions(baseImgAbs);
+  const assContent = generateThumbnailAss(recipe, w, h);
+  const assPath = tmpPath(`thumb-ass-${Date.now()}.ass`);
+  fs.writeFileSync(assPath, assContent, "utf-8");
+
+  // Escape the ASS path for the subtitles= filter (Windows colon gotcha)
+  const escapedAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+
+  // Optional crop-to-focus filter (zoom in on the subject's face/center)
+  let cropFilter = "";
+  if (recipe.cropFocus && recipe.cropFocus.zoom > 1) {
+    const z = recipe.cropFocus.zoom.toFixed(4);
+    const fx = recipe.cropFocus.x.toFixed(4);
+    const fy = recipe.cropFocus.y.toFixed(4);
+    // Scale up then crop back to original size centered on the focal point
+    cropFilter = `scale=iw*${z}:ih*${z},crop=iw/${z}:ih/${z}:iw*(${z}-1)*${fx}/${z}:ih*(${z}-1)*${fy}/${z},`;
+  }
+
+  const vf = `${cropFilter}subtitles='${escapedAss}'`;
+
+  await execAsync(
+    `"${bin}" -y -loop 1 -t 2 -i "${baseImgAbs}" -vf "${vf}" -frames:v 1 -q:v 2 "${outAbs}"`
+  );
+
+  // Clean up the temporary ASS file
+  try { fs.unlinkSync(assPath); } catch {}
+}
