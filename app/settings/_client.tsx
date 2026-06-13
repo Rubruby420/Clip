@@ -117,6 +117,13 @@ const SOCIAL_PLATFORMS: { platform: SocialPlatform; name: string; emoji: string 
   { platform: "instagram", name: "Instagram Reels", emoji: "📱" },
 ];
 
+// Keys that must be saved before a platform's Connect button is enabled.
+const PLATFORM_REQUIRED_KEYS: Record<SocialPlatform, ConfigKey[]> = {
+  tiktok:    ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"],
+  youtube:   ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET"],
+  instagram: ["INSTAGRAM_APP_ID", "INSTAGRAM_APP_SECRET"],
+};
+
 const EMPTY: Record<ConfigKey, string> = {
   OPENAI_API_KEY: "",
   ASSEMBLYAI_API_KEY: "",
@@ -325,33 +332,50 @@ export default function SettingsClient({ firstRun }: { firstRun: boolean }) {
           <div id="connections" className="flex flex-col gap-3 mb-8">
             {SOCIAL_PLATFORMS.map(({ platform, name, emoji }) => {
               const conn = connections[platform];
+              // Enable Connect only when all required keys have a saved (masked) value.
+              const credReady = PLATFORM_REQUIRED_KEYS[platform].every(
+                (k) => !!masked[k]
+              );
               return (
-                <div key={platform} className="bg-surface-800 border border-surface-600 rounded-xl px-5 py-4 flex items-center gap-3">
+                <div key={platform} className={`bg-surface-800 border rounded-xl px-5 py-4 flex items-center gap-3 ${
+                  conn.connected ? "border-green-700/50" : "border-surface-600"
+                }`}>
                   <span className="text-xl">{emoji}</span>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="text-white text-sm font-semibold">{name}</div>
                     {conn.connected ? (
                       <div className="text-green-400 text-xs mt-0.5">
                         ✓ Connected{conn.handle ? ` as ${conn.handle}` : ""}
                       </div>
+                    ) : credReady ? (
+                      <div className="text-surface-500 text-xs mt-0.5">Not connected — ready to connect</div>
                     ) : (
-                      <div className="text-surface-500 text-xs mt-0.5">Not connected</div>
+                      <div className="text-yellow-600 text-xs mt-0.5">
+                        Enter credentials below first, save, then restart Clip
+                      </div>
                     )}
                   </div>
                   {conn.connected ? (
                     <button
                       onClick={() => handleDisconnect(platform)}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors border border-red-800 hover:border-red-600 px-3 py-1.5 rounded-lg"
+                      className="flex-shrink-0 text-xs text-red-400 hover:text-red-300 transition-colors border border-red-800 hover:border-red-600 px-3 py-1.5 rounded-lg"
                     >
                       Disconnect
                     </button>
-                  ) : (
+                  ) : credReady ? (
                     <a
                       href={`/api/social/${platform}/connect`}
-                      className="text-xs bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
+                      className="flex-shrink-0 text-xs bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
                     >
                       Connect
                     </a>
+                  ) : (
+                    <span
+                      className="flex-shrink-0 text-xs bg-surface-700 text-surface-500 px-3 py-1.5 rounded-lg cursor-not-allowed"
+                      title="Save credentials below first"
+                    >
+                      Connect
+                    </span>
                   )}
                 </div>
               );
