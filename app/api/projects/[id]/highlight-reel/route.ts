@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { exportSplicedClip, tmpPath } from "@/lib/ffmpeg";
+import { buildHighlightReel, tmpPath } from "@/lib/ffmpeg";
 import { resolveStorage, ensureDirFor, projectHighlightReelPath } from "@/lib/storage";
 import fs from "fs";
 import { randomUUID } from "crypto";
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const project = await db.project.findUnique({
     where: { id },
-    include: { clips: { orderBy: { score: "desc" } } },
+    include: { clips: { orderBy: [{ score: "desc" }, { createdAt: "asc" }] } },
   });
 
   const enc = new TextEncoder();
@@ -51,19 +51,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const reelId = randomUUID();
       const outPath = tmpPath(`reel_${reelId}.mp4`);
+      // Prefer originalKey (always the local relative path); fall back to originalUrl.
+      const sourcePath = resolveStorage(project.originalKey || project.originalUrl);
       const segments = top.map((c) => ({ start: c.startTime, end: c.endTime }));
 
       try {
         send({ type: "start", total: top.length });
 
-        await exportSplicedClip({
-          inputPath: resolveStorage(project.originalUrl),
+        await buildHighlightReel({
+          inputPath: sourcePath,
           outputPath: outPath,
           segments,
           aspectRatio,
           blurBackground,
-          onSegmentProgress: (i, pct) =>
-            send({ type: "progress", idx: i, total: top.length, title: top[i].title, pct }),
+          onProgress: (pct) => send({ type: "progress", pct }),
         });
 
         const reelRel = projectHighlightReelPath(id);

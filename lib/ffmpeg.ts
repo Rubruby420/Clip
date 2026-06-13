@@ -515,6 +515,94 @@ export function tmpPath(name: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Highlight reel — one concat-filter pass, fast seeks
+// ---------------------------------------------------------------------------
+
+/**
+ * Stitch N clips from the same source into one video in a single FFmpeg pass.
+ * Uses -ss BEFORE -i (keyframe seek — fast, no decode-from-start) and the
+ * concat filter to join all segments in one process.
+ */
+export async function buildHighlightReel(opts: {
+  inputPath: string;
+  outputPath: string;
+  segments: { start: number; end: number }[];
+  aspectRatio: "9:16" | "16:9" | "1:1";
+  blurBackground?: boolean;
+  onProgress?: (pct: number) => void;
+}): Promise<void> {
+  const bin = ffmpegBin();
+  const { inputPath, outputPath, segments, aspectRatio, blurBackground = true, onProgress } = opts;
+  if (segments.length === 0) throw new Error("No segments to stitch");
+
+  const targetW = aspectRatio === "16:9" ? 1920 : 1080;
+  const targetH = aspectRatio === "16:9" ? 1080 : aspectRatio === "9:16" ? 1920 : 1080;
+  const totalDur = segments.reduce((s, c) => s + Math.max(0.05, c.end - c.start), 0);
+
+  // One -ss / -t / -i triple per segment — fast keyframe seek before the input.
+  const args: string[] = ["-y"];
+  for (const seg of segments) {
+    const dur = Math.max(0.05, seg.end - seg.start);
+    args.push("-ss", String(seg.start), "-t", String(dur), "-i", inputPath);
+  }
+
+  // Scale+blur each input, then concat all video+audio streams.
+  const filterParts: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    if (blurBackground) {
+      filterParts.push(
+        `[${i}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},boxblur=20:5[bg${i}]`,
+        `[${i}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease[fg${i}]`,
+        `[bg${i}][fg${i}]overlay=(W-w)/2:(H-h)/2[v${i}]`,
+      );
+    } else {
+      filterParts.push(
+        `[${i}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black[v${i}]`,
+      );
+    }
+  }
+  const concatIn = segments.map((_, i) => `[v${i}][${i}:a]`).join("");
+  filterParts.push(`${concatIn}concat=n=${segments.length}:v=1:a=1:unsafe=1[v][a]`);
+
+  args.push(
+    "-filter_complex", filterParts.join(";"),
+    "-map", "[v]",
+    "-map", "[a]",
+    "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-r", "30",
+    "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+    "-movflags", "+faststart",
+    "-progress", "pipe:1",
+    "-nostats",
+    outputPath,
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(bin, args, { windowsHide: true });
+    let stderrBuf = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      const m = d.toString().match(/out_time_ms=(\d+)/);
+      if (m && onProgress && totalDur > 0) {
+        const outSec = parseInt(m[1], 10) / 1_000_000;
+        const pct = Math.min(99, Math.round((outSec / totalDur) * 100));
+        onProgress(pct);
+      }
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      stderrBuf = (stderrBuf + d.toString()).slice(-2000);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        onProgress?.(100);
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg highlight reel exited code ${code}: ${stderrBuf.slice(-400)}`));
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Thumbnail generator helpers
 // ---------------------------------------------------------------------------
 

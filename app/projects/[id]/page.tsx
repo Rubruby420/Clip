@@ -100,9 +100,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Highlight reel state
   const [reelExporting, setReelExporting] = useState(false);
-  const [reelProgress, setReelProgress] = useState<{
-    idx: number; total: number; title: string; pct: number;
-  } | null>(null);
+  const [reelPct, setReelPct] = useState(0);
+  const [reelTotal, setReelTotal] = useState(0);
   const [reelUrl, setReelUrl] = useState<string | null>(null);
   const [reelDone, setReelDone] = useState(false);
   const [reelN, setReelN] = useState(5);
@@ -231,7 +230,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   async function handleHighlightReel() {
     setReelExporting(true);
-    setReelProgress(null);
+    setReelPct(0);
     setReelDone(false);
     try {
       const res = await fetch(`/api/projects/${id}/highlight-reel`, {
@@ -254,11 +253,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           try {
             const evt = JSON.parse(line.slice(6)) as Record<string, unknown>;
             if (evt.type === "start") {
-              setReelProgress({ idx: 0, total: Number(evt.total), title: "", pct: 0 });
+              setReelTotal(Number(evt.total));
+              setReelPct(0);
             } else if (evt.type === "progress") {
-              setReelProgress({ idx: Number(evt.idx), total: Number(evt.total), title: String(evt.title), pct: Number(evt.pct) });
+              setReelPct(Number(evt.pct));
             } else if (evt.type === "done") {
               setReelUrl(String(evt.url));
+              setReelPct(100);
               setReelDone(true);
             } else if (evt.type === "error") {
               console.error("Highlight reel error:", evt.error);
@@ -738,34 +739,24 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       )}
 
       {/* Highlight reel progress overlay */}
-      {reelExporting && reelProgress && (
+      {reelExporting && (
         <div className="fixed bottom-6 left-6 z-50 bg-surface-800 border border-surface-600 rounded-2xl shadow-2xl p-5 w-80">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-3">
             <Film className="w-4 h-4 text-brand-400 shrink-0" />
             <p className="text-white text-sm font-semibold">
-              Stitching clip {reelProgress.idx + 1} / {reelProgress.total}
+              Stitching {reelTotal} clip{reelTotal !== 1 ? "s" : ""} into reel…
             </p>
           </div>
-          {reelProgress.title && (
-            <p className="text-surface-400 text-xs mb-3 truncate">{reelProgress.title}</p>
-          )}
-          <div className="h-1.5 bg-surface-700 rounded-full overflow-hidden mb-1">
+          <div className="h-2 bg-surface-700 rounded-full overflow-hidden mb-1">
             <div
               className="h-full bg-brand-500 rounded-full transition-[width] duration-300"
-              style={{ width: `${reelProgress.pct}%` }}
+              style={{ width: `${reelPct}%` }}
             />
           </div>
-          <div className="flex justify-between text-[10px] text-surface-500 mb-3">
-            <span>Current clip</span>
-            <span>{reelProgress.pct}%</span>
+          <div className="flex justify-between text-[10px] text-surface-500 mt-1">
+            <span>One FFmpeg concat pass</span>
+            <span>{reelPct}%</span>
           </div>
-          <div className="h-1 bg-surface-700 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-brand-700 rounded-full transition-[width] duration-300"
-              style={{ width: `${((reelProgress.idx + reelProgress.pct / 100) / reelProgress.total) * 100}%` }}
-            />
-          </div>
-          <p className="text-[10px] text-surface-600 mt-1 text-right">Overall progress</p>
         </div>
       )}
 
